@@ -1,0 +1,2621 @@
+%\pdfoutput=1
+\documentclass[11pt,leqno]{article}
+
+\usepackage{amsmath,amsthm,amssymb}
+\usepackage{authblk,subfigure,booktabs,enumerate}
+\usepackage{graphicx}
+\usepackage{color}
+\usepackage{mathabx,bm}
+\usepackage{algorithm,algpseudocode}
+\usepackage{url}
+\usepackage{enumitem}
+
+\usepackage{geometry}
+\geometry{top=30mm, bottom=30mm, left=25mm, right=25mm, includefoot}
+
+
+\algnewcommand\algorithmicinput{\textbf{Input:}}
+\algnewcommand\Input{\item[\algorithmicinput]}
+\algnewcommand\algorithmicoutput{\textbf{Output:}}
+\algnewcommand\Output{\item[\algorithmicoutput]}
+
+
+\theoremstyle{plain}
+\newtheorem{thm}{Theorem}[section]
+\newtheorem{prop}[thm]{Proposition}
+\newtheorem{cor}[thm]{Corollary}
+\newtheorem{lem}[thm]{Lemma}
+
+\theoremstyle{remark}
+\newtheorem{rem}[thm]{Remark}
+
+\theoremstyle{definition}
+\newtheorem{ex}[thm]{Example}
+\newtheorem{defn}[thm]{Definition}
+\newtheorem{assum}[thm]{Assumption}
+
+%%%
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\makeatletter
+
+%%%
+\pagestyle{plain}
+\numberwithin{equation}{section}
+\numberwithin{figure}{section}
+\numberwithin{table}{section}
+\numberwithin{algorithm}{section}
+
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
+%%% user commands
+\newcommand{\EE}{\mathbb{E}}
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\PP}{\mathbb{P}}
+\newcommand{\QQ}{\mathbb{Q}}
+\newcommand{\FF}{\mathbb{F}}
+\newcommand{\WW}{\mathbb{W}}
+\newcommand{\cP}{\mathcal{P}}
+\newcommand{\cH}{\mathcal{H}}
+\newcommand{\cU}{\mathcal{U}}
+\newcommand{\dkl}{D_{\mathrm{KL}}}
+
+
+\title{Kernel-based potential mean-field games \\ with unbiased random Fourier $U$-statistics}
+
+\author[1]{Yumiharu Nakano\thanks{E-mail: nakano@comp.isct.ac.jp}}
+\affil[1]{Department of Mathematical and Computing Science,
+            Institute of Science Tokyo}
+
+
+\date{\today}
+
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We study the subclass of potential mean-field games
+in which the running interaction cost and the terminal target cost are both expressed
+through reproducing-kernel maximum mean discrepancy (MMD) penalties,
+and develop a computational framework that exploits this kernel structure.
+Both costs are estimated from finite-sample empirical distributions
+using a random Fourier U-statistic representation that is unbiased
+and has linear cost in the batch size.
+The drift of the controlled diffusion is parametrized by a neural network
+and trained via stochastic gradient descent.
+For this subclass we prove a sample-level almost-sure convergence theorem
+and an explicit almost-sure rate of convergence,
+under coupled rate conditions on the penalty parameter, the random-feature count, the sample size,
+and the optimization tolerance.
+The framework includes the kernel-MMD-penalty Schr{\"o}dinger bridge problem
+as the special case of a vanishing interaction cost.
+Numerical experiments illustrate the method on the Schr{\"o}dinger bridge problem
+in dimensions up to one hundred,
+and on an electric vehicle charging coordination problem with per-vehicle physical heterogeneity,
+where an aggregate-demand congestion cost represents price-feedback competition at the population level
+and the terminal MMD penalty shapes the state-of-charge distribution at the deadline.
+
+\begin{flushleft}
+{\bf Key words}: mean-field games, maximum mean discrepancy, random Fourier features, U-statistics, neural SDE, Schr{\"o}dinger bridge.
+\end{flushleft}
+\begin{flushleft}
+{\bf AMS MSC 2020}:
+Primary, 93E20, 91A16; Secondary, 49N80, 60E10
+\end{flushleft}
+\end{abstract}
+
+%93E20 Optimal stochastic control
+%91A16 Mean field games (aspects of game theory)
+%49N80 Mean field games and control
+%60E10 Characteristic functions; other transforms
+
+%%%
+%%%------------------------------------------------------------------------
+\section{Introduction}\label{sec:1}
+%%%------------------------------------------------------------------------
+
+Mean-field games (MFGs)
+\cite{las-lio:2007,hua-cai-mal:2006}
+model large populations of strategic agents through the interaction
+of a representative agent with the population distribution;
+see the monographs \cite{car-del:2018a,car-del:2018b} for a comprehensive account.
+The subclass of \emph{potential} (or \emph{cooperative}) MFGs,
+where the running and terminal costs admit variational potentials with respect to the population law,
+reduces to a single mean-field stochastic optimal control problem
+and has been used to model swarm coordination, traffic flow, opinion dynamics,
+and energy systems (see, e.g., \cite{cou-per-tem-deb:2012,ma-cal-his:2013,par-gen-lyg:2020}).
+A particularly important variant is the \emph{planning} (or \emph{coordination}) MFG of Lasry--Lions
+and Achdou--Camilli--Capuzzo-Dolcetta \cite{ach-cam-cap:2012},
+in which the terminal cost is a distributional functional of the population law at the deadline,
+typically enforcing a prescribed terminal distribution $\mu_T$ as a hard constraint $\mathcal{L}(X_T)=\mu_T$.
+In its potential / variational form, this problem is equivalently known as
+\emph{mean-field optimal transport} (MFOT) \cite{ben-car-hat:2019,car-mes-san:2017}.
+A quadratic kinetic energy with an additional running mean-field cost is minimised
+over flows that transport $\mu_0$ to $\mu_T$, and the Schr{\"o}dinger bridge of \cite{nak:2024sb} arises
+as its entropic specialisation with vanishing interaction.
+Our framework provides a sample-level numerical scheme for the \emph{soft-target} version of MFOT,
+where the hard planning constraint is relaxed by the kernel-MMD penalty $\lambda\gamma_K^2(\mathcal{L}(X_T),\mu_T)$
+introduced below.
+
+A motivating example from the smart-grid literature is coordinated charging of electric vehicle (EV) fleets \cite{cou-per-tem-deb:2012}.
+A large number of EVs decide, over an operational horizon $[0,T]$,
+when and how fast to charge.
+Each EV faces a private charging effort and is exposed to a market electricity price
+that depends on the aggregate demand of the fleet (the population distribution of charging power),
+producing a congestion-type cost.
+At the deadline $T$, the fleet should reach a desired distribution of state-of-charge.
+For example, all vehicles charged to a sufficient level for the next day.
+This is a soft target on the terminal population law
+$\mathcal{L}(X_T)$ (we write $\mathcal{L}(X)$ for the probability distribution of a random variable $X$ throughout this paper),
+rather than on individual trajectories.
+In a representative-agent formulation,
+this leads to the potential MFG
+\begin{equation}\label{eq:1.mfg_intro}
+ \inf_{u\in\mathcal{A}} 
+ \int_0^T \left(\frac{1}{2}\EE\bigl[|u(t,X_t)|^2\bigr] + \mathcal{R}[\mathcal{L}(X_t)]\right)\,dt
+ + \mathcal{T}[\mathcal{L}(X_T)],
+\end{equation}
+where $X$ is a controlled diffusion driven by the drift $u$,
+$\mathcal{R}$ encodes the congestion cost,
+and $\mathcal{T}$ encodes the deadline target.
+Classical grid-based numerical methods for MFGs, e.g., HJB--Fokker--Planck coupled solvers
+\cite{ach-cap:2010,ach-cam-cap:2012} and related schemes surveyed in \cite{lau:2021}, are limited to dimensions $d\le 5$ by the curse of dimensionality,
+whereas deep-learning approaches based on neural backward SDEs, fictitious play, or alternating-network architectures
+\cite{de-etal:2021,car-lau:2022,rut-etal:2020,lin-etal:2021apac}
+have demonstrated higher-dimensional capability empirically
+but typically lack rigorous convergence guarantees in the sample-based regime where they are actually trained.
+
+In this paper, we develop a computational framework for the potential MFG \eqref{eq:1.mfg_intro}
+where both the running interaction cost $\mathcal{R}$ and the terminal cost $\mathcal{T}$ are expressed
+through reproducing-kernel maximum mean discrepancies (MMDs).
+The per-iteration cost of the empirical objective is linear in the sample size $N$
+via the random Fourier $U$-statistic representation introduced in Section~\ref{sec:3},
+in contrast to the $O(N^2)$ cost of the original kernel-MMD-penalty approach of \cite{nak:2024sb}.
+Specifically, we take
+\begin{equation}\label{eq:1.kernel_costs}
+ \mathcal{R}[\nu_t] = \frac{c}{2}\iint W(x,y)\,\nu_t(dx)\,\nu_t(dy),
+ \qquad
+ \mathcal{T}[\nu_T] = \lambda\gamma_K(\nu_T,\mu_T)^2,
+\end{equation}
+where $W$ is a non-negative symmetric kernel describing the congestion.
+We consider two instantiations: a translation-invariant kernel (e.g., the Gaussian)
+when an $O(NM)$ random-feature representation is desired (Section~\ref{sec:3.1interaction}),
+and the rank-one aggregate-demand kernel of Section~\ref{sec:5ev} for the EV application.
+The functional $\gamma_K$ is the MMD associated with a characteristic kernel $K$
+that relaxes the deadline constraint $\nu_T=\mu_T$.
+The kernel choice is motivated by the kernel-based Schr\"odinger bridge problem (SBP) studied by the author in~\cite{nak:2024sb},
+which corresponds to the special case $\mathcal{R}\equiv 0$ of \eqref{eq:1.mfg_intro}--\eqref{eq:1.kernel_costs};
+in that work the empirical kernel $U$-statistic of \eqref{eq:empirical_mmd} was used,
+restricting the experiments to dimensions $d\le 2$ due to the $O(N^2)$ kernel-evaluation cost.
+
+\begin{equation}
+\label{eq:empirical_mmd}
+ \bar{\gamma}_K^2 = \frac{1}{N(N-1)}\sum_i\sum_{j\neq i} K(X_i,X_j) - \frac{2}{N^2}\sum_{i,j}K(X_i,Y_j) + \frac{1}{N(N-1)}\sum_i\sum_{j\neq i}K(Y_i,Y_j).
+\end{equation}
+
+To overcome this scaling barrier, we use random Fourier features (RFF) \cite{rah-rec:2007}.
+Standard RFF-based estimators of the MMD${}^2$ have been studied for hypothesis testing
+\cite{zha-men:2015,sut-sch:2015,cho-kim:2024} and take the form of a $V$-statistic with positive bias of order $O(\Phi(0)/N)$. 
+This bias is asymptotically negligible in testing but introduces a persistent distortion at the population level
+that prevents a clean limit-theorem analysis as the MMD penalty weight grows.
+We instead construct an \emph{unbiased} $O(NM)$ estimator of $\gamma_K^2$
+by combining the Fourier representation
+\[
+ \gamma_K(\mu,\nu)^2 = \Phi(0)\int |\tilde{\mu}(\xi)-\tilde{\nu}(\xi)|^2\rho(\xi)\,d\xi
+\]
+with a $U$-statistic decomposition that eliminates the diagonal bias in $O(N)$ per frequency.
+The same construction applies to the congestion energy $\mathcal{R}[\nu_t]$
+when the kernel $W$ is translation-invariant with positive Fourier transform,
+yielding an unbiased $O(NM)$ estimator of the interaction cost (Theorem~\ref{thm:rfu_interaction}).
+For congestion energies of aggregate-demand type used in Section~\ref{sec:5ev},
+a simpler unbiased $O(N)$ $U$-statistic is available without random features
+(see \eqref{eq:5ev.Rhat}).
+The drift $u$ is parametrized by a neural network and trained by stochastic gradient descent
+on the empirical version of \eqref{eq:1.mfg_intro};
+the empirical interaction cost $\hat{\mathcal{R}}[\hat\nu_t^N]$ and the empirical terminal penalty
+$\lambda\hat\gamma_{M,N}^2(\hat\nu_T^N,\mu_T)$ are evaluated on the current minibatch
+at $O(NM)$ cost (or $O(N)$ for the aggregate-demand congestion).
+
+\paragraph{Relation to existing computational MFG methods.}
+The HJB--Fokker--Planck coupled approach of Achdou and collaborators \cite{ach-cap:2010,ach-cam-cap:2012}
+provides rigorous numerical schemes for MFGs but is restricted to dimensions $d\le 5$ by the curse of dimensionality.
+Variational primal methods of generalised conditional-gradient (Frank--Wolfe) type for potential MFGs
+have been developed by Nakamura and Saito \cite{nakam-sai:2026loc,nakam-sai:2026disc},
+with explicit non-asymptotic convergence rates established at the fully discretised level on grids;
+these analyses cover local-coupling running costs but are tied to finite-difference discretisations.
+Deep-learning MFG methods have addressed the high-dimensional regime through several routes:
+the alternating population--control networks of \cite{lin-etal:2021apac} (APAC-Net) and the related framework of \cite{rut-etal:2020},
+fictitious-play and policy-iteration variants surveyed in \cite{car-lau:2022,car-lau:2021},
+and bridge-matching or diffusion-Schr{\"o}dinger-bridge methods
+\cite{de-etal:2021,var-etal:2021,shi-etal:2023dsbm,Tong2024}
+that solve the $c=0$ specialization of \eqref{eq:1.mfg_intro}.
+These methods have demonstrated empirical scalability,
+but typically rely on training-objective heuristics or auxiliary networks
+and lack sample-level convergence guarantees in the regime in which they are actually trained.
+Our method takes a structurally simpler route within the kernel-MMD terminal-penalty subclass:
+a single end-to-end optimization with one drift network and a closed-form unbiased $O(NM)$ estimator of the terminal MMD penalty,
+together with a flexible empirical estimator of the running interaction cost
+(unbiased $O(NM)$ for kernel-MMD interactions and unbiased $O(N)$ for aggregate-demand costs),
+avoiding both the alternating optimization between population and control networks and the auxiliary score networks of bridge-matching schemes.
+This structural simplicity is what enables the sample-level almost-sure convergence theorem and the explicit almost-sure rate of Section~\ref{sec:4}.
+We illustrate the method at dimensions up to $d=100$ for the special case $\mathcal{R}\equiv 0$ (Schr{\"o}dinger bridge),
+and on an electric-vehicle charging coordination problem
+with a physical per-vehicle heterogeneity, where the soft MMD target shapes the deadline state-of-charge distribution
+and the aggregate-demand running cost reduces peak and time-averaged grid load.
+
+\paragraph{Scope.}
+Our framework targets the soft-target mean-field optimal transport problem
+in which the terminal cost is the squared MMD against a prescribed distribution $\mu_T$.
+This structure makes the soft deadline penalty $\lambda\gamma_K^2(\nu_T,\mu_T)$ available
+as a relaxation of the planning constraint $\nu_T=\mu_T$,
+and enables the unbiased $O(NM)$ random-feature representation of $\gamma_K^2$ that underlies the convergence guarantees of Section~\ref{sec:4}.
+The running mean-field cost $\mathcal{R}[\nu_t]$ is more flexible. 
+The convergence theorem only requires $\mathcal{R}$ to be non-negative, weakly continuous on $\cP(\RR^d)$,
+and accompanied by a strongly consistent empirical estimator (Proposition~\ref{prop:convergence_general}).
+This covers both kernel-MMD interactions for which we give an unbiased $O(NM)$ random-feature estimator in Section~\ref{sec:3.1interaction}
+and aggregate-demand costs of the form $D[\nu]^2$ used in the EV application of Section~\ref{sec:5ev}. 
+Extending to weakly lower-semicontinuous functionals such as local-density costs $\int F(\rho(x))\,dx$
+is a natural next step.
+
+\paragraph{Contributions.}
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item We derive a Fourier representation of $\gamma_K^2$ and of the kernel self-interaction $\iint W(x,y)\nu(dx)\nu(dy)$,
+and construct unbiased $U$-statistic estimators
+$\hat\gamma_{M,N}^2$ for $\gamma_K^2$ (Theorem~\ref{thm:rfu_unbiased})
+and $\hat{\mathcal{R}}_{M,N}[\hat\nu^N]$ for $\mathcal{R}[\nu]$ (Theorem~\ref{thm:rfu_interaction}),
+each of complexity $O(NM)$ and admitting an explicit variance decomposition $O(1/M)+O(1/N)$.
+\item We formulate the empirical kernel-MMD soft-target MFOT problem (Section~\ref{sec:4.1mfg})
+and establish a sample-level almost-sure convergence theorem for it
+(Theorem~\ref{thm:convergence}), with the Schr{\"o}dinger-bridge specialization
+recovered as Corollary~\ref{cor:sbp_special_case}.
+Both the energy and the kernel costs are estimated from finite samples,
+and the sequences $\lambda_n,M_n,N_n,\varepsilon_n$ are coupled via the explicit rate conditions
+$\lambda_n\to\infty$, $M_n/\log n\to\infty$, $N_n\to\infty$, $\varepsilon_n\to 0$, $\lambda_n\varepsilon_n\to 0$.
+Under a uniform bound on the drift, we further obtain an explicit almost-sure rate
+of the form $\le(\text{constant}+\varepsilon_n)/\lambda_n+C^*(\sqrt{\log n/M_n}+\sqrt{\log n/N_n})$
+holding for all sufficiently large $n$,
+for the terminal discrepancy $\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)^2$,
+yielding an algebraic rate $\gamma_K=O(n^{-a/2}(\log n)^{1/4})$
+under polynomial schedules with $\lambda_n=n^a$ and $M_n=N_n=n^{2a}$
+(Proposition~\ref{prop:rate} for the SBP case and Proposition~\ref{prop:rate_mfg} for the MFG case).
+\item The Schr{\"o}dinger bridge problem of~\cite{nak:2024sb} is recovered as the special case $\mathcal{R}\equiv 0$
+(Corollary~\ref{cor:sbp_special_case}),
+and taking the $M=\infty$ limit yields a sample-level convergence theorem for the kernel-MMD penalty method
+of~\cite{nak:2024sb} (Corollary~\ref{cor:kernel_convergence}).
+To the author's knowledge, this is the first sample-level convergence guarantee
+for the empirical implementation of that method.
+The convergence theorem itself extends beyond the kernel-MMD structure of the running cost
+to any non-negative weakly continuous functional with a consistent empirical estimator
+(Proposition~\ref{prop:convergence_general}),
+which we use in Section~\ref{sec:5ev} to handle an aggregate-demand congestion cost
+of the form $D[\nu]^2=(\int u^{\!*}(s)\nu(ds))^2$.
+\item Numerical experiments cover the Schr{\"o}dinger bridge specialization in dimensions up to $d=100$
+(Gaussian shift and bimodal targets; Sections~\ref{sec:5.2}--\ref{sec:5.5comp})
+and the EV charging fleet potential MFG with a physical per-vehicle heterogeneity
+(log charging-speed multiplier; Section~\ref{sec:5ev}),
+demonstrating that the framework simultaneously recovers the target SOC distribution
+under the kernel terminal penalty and reduces the peak and time-averaged aggregate fleet demand
+under the running interaction cost.
+\end{enumerate}
+
+The remainder of this paper is organized as follows.
+Section~\ref{sec:2} recalls basic facts on the MMD and derives the Fourier representation
+used by both the terminal MMD penalty and the kernel congestion cost.
+Section~\ref{sec:3} presents the proposed unbiased $O(NM)$ $U$-statistic estimators
+and establishes their unbiasedness, complexity, and variance properties.
+Section~\ref{sec:4} formulates the empirical potential MFG problem
+and states the sample-level convergence theorem and the explicit almost-sure rate,
+together with the Schr{\"o}dinger-bridge specialization.
+Section~\ref{sec:5} presents numerical experiments,
+beginning with the Schr{\"o}dinger-bridge special case as a warm-up
+and proceeding to the EV charging fleet coordination problem.
+Section~\ref{sec:6} gives proofs of the main results.
+
+\paragraph{Notation.}
+Throughout the paper, $d\ge 1$ is a positive integer,
+and $|\cdot|$ denotes the Euclidean norm on $\RR^d$. 
+For any column $x\in\RR^d$, we write $x^{\mathsf{T}}$ for the transposition of $x$ 
+and $x_k$ for the $k$-th component of $x$, $k=1,\ldots,d$.
+For an $\RR^d$-valued random variable $X$, $\EE[X]_k$ denotes the $k$-th component
+of its expectation vector $\EE[X]\in\RR^d$.
+The set of Borel probability measures on $\RR^d$ is denoted by $\cP(\RR^d)$,
+and we write $\mathcal{L}(X)\in\cP(\RR^d)$ for the distribution of an $\RR^d$-valued random variable $X$.
+For a topological space $E$, $C_b(E)$ denotes the space of bounded continuous real-valued functions on $E$.
+For an integrable function $\Phi:\RR^d\to\RR$,
+$\widehat{\Phi}$ denotes its Fourier transform with the convention
+$\widehat{\Phi}(\xi)=(2\pi)^{-d/2}\int_{\RR^d}e^{-\mathrm{i}\xi^{\mathsf{T}}x}\Phi(x)\,dx$,
+where $\mathrm{i}=\sqrt{-1}$.
+$I_k$ denotes the $k\times k$ identity matrix,
+and we write $\mathcal{N}(m,\Sigma)$ for the Gaussian distribution on $\RR^k$ with mean $m\in\RR^k$ and covariance matrix $\Sigma$.
+$\EE[\cdot]$ and $\mathrm{Var}(\cdot)$ stand for expectation and variance, respectively. 
+For probability measures $Q$, $P$ on a common measurable space,
+$H(Q\,|\,P):=\int\log(dQ/dP)\,dQ$ when $Q\ll P$, and $H(Q\,|\,P):=+\infty$ otherwise,
+is the Kullback--Leibler divergence (relative entropy) of $Q$ with respect to $P$.
+Finally, $C([0,1];\RR^d)$ denotes the space of continuous paths $[0,1]\to\RR^d$
+endowed with the supremum norm.
+
+
+%%%------------------------------------------------------------------------
+\section{Hilbert space embeddings and Fourier representation of MMD}\label{sec:2}
+%%%------------------------------------------------------------------------
+
+%%
+\subsection{Maximum mean discrepancy}\label{sec:2.1}
+
+Let $K\in C_b(\RR^d\times\RR^d)$ be a symmetric and strictly positive definite kernel on $\RR^d$, i.e.,
+$K(x,y)=K(y,x)$ for $x,y\in\RR^d$ and for any pairwise distinct $x_1,\ldots,x_L\in \RR^d$ and
+$\alpha=(\alpha_1,\ldots,\alpha_L)^{\mathsf{T}}\in\RR^L\setminus\{0\}$,
+\[
+ \sum_{j,\ell=1}^L\alpha_j\alpha_{\ell}K(x_j,x_{\ell})>0.
+\]
+Then there exists a unique Hilbert space $\cH\subset C_b(\RR^d)$ such that $K$ is a reproducing kernel on
+$\cH$ with norm $\|\cdot\|$ (see, e.g., Wendland \cite{wen:2005});
+the inclusion $\cH\subset C_b(\RR^d)$ follows from the reproducing property
+$|f(x)|=|\langle f,K(\cdot,x)\rangle|\le \|f\|\sqrt{K(x,x)}\le \|f\|\sup_z\sqrt{K(z,z)}$,
+which is finite since $K\in C_b(\RR^d\times\RR^d)$.
+The \textit{maximum mean discrepancy} (MMD) associated with $K$ is defined by
+\begin{equation}
+\label{eq:2.1}
+ \gamma_K(\mu,\nu): = \sup_{f\in\cH, \, \|f\|\le 1}\left|\int_{\RR^d} f d\mu - \int_{\RR^d} f d\nu\right|,
+ \quad \mu,\nu\in\cP(\RR^d)
+\end{equation}
+(see Gretton et al.~\cite{gre-etal:2006}).
+We assume that $\gamma_K$ defines a metric on $\cP(\RR^d)$, i.e., $K$ is a \textit{characteristic kernel}.
+By the reproducing property,
+\begin{equation}
+\label{eq:2.2}
+ \gamma_K(\mu,\nu)^2 = \iint\nolimits_{\RR^d\times\RR^d}K(x,y)(\mu-\nu)(dx)(\mu-\nu)(dy)
+\end{equation}
+(see Section 2 in Sriperumbudur et al.~\cite{sri-etal:2010}).
+
+
+%%
+\subsection{Fourier representation}\label{sec:2.2}
+
+We now derive the Fourier representation that is central to our approach.
+Consider the case where
+\begin{enumerate}
+\item[(A)] $K$ is represented as $K(x,y)=\Phi(x-y)$, $x,y\in\RR^d$, for some bounded, continuous and integrable function $\Phi$ on $\RR^d$ such that
+ its Fourier transform $\widehat{\Phi}$ is also integrable on $\RR^d$ and satisfies $\widehat{\Phi}(\xi)>0$ for any $\xi\in\RR^d$.
+\end{enumerate}
+Under (A), the kernel $K$ is in $C_b(\RR^d\times\RR^d)$ that is symmetric and strictly positive definite.  
+Moreover, the Fourier inversion formula gives
+\begin{equation}
+\label{eq:2.3}
+\Phi(x) = \int_{\RR^d}\rho(\xi)e^{\mathrm{i}\xi^{\mathsf{T}}x}d\xi, \quad x\in\RR^d,
+\end{equation}
+where $\rho(\xi)=(2\pi)^{-d/2}\widehat{\Phi}(\xi)>0$ for $\xi\in\RR^d$.
+Substituting \eqref{eq:2.3} into \eqref{eq:2.2} and applying Fubini's theorem, we obtain
+\begin{equation}
+\label{eq:2.4}
+\gamma_K(\mu,\nu)^2 = \int_{\RR^d}|\tilde{\mu}(\xi) - \tilde{\nu}(\xi)|^2 \rho(\xi) d\xi,
+\end{equation}
+where $\tilde{\mu}(\xi):=\int_{\RR^d}e^{\mathrm{i}\xi^{\mathsf{T}}x}\mu(dx)$ denotes the characteristic function of $\mu$.
+
+Note that $\rho$ integrates to $\Phi(0)=K(0,0)$.
+Let $X\sim\mu$, $Y\sim \nu$, $X^{\prime}\sim\mu$, and $Y^{\prime}\sim\nu$, with
+$X,X^{\prime},Y,Y^{\prime}$ mutually independent.
+Then, since $|\tilde{\mu}(\xi) - \tilde{\nu}(\xi)|^2$ is real-valued,
+\begin{align}
+|\tilde{\mu}(\xi) - \tilde{\nu}(\xi)|^2
+&= \EE[e^{\mathrm{i}\xi^{\mathsf{T}}X} - e^{\mathrm{i}\xi^{\mathsf{T}}Y}]\overline{\EE[e^{\mathrm{i}\xi^{\mathsf{T}}X} - e^{\mathrm{i}\xi^{\mathsf{T}}Y}]} \notag \\
+&= \EE\left[e^{\mathrm{i}\xi^{\mathsf{T}}(X-X^{\prime})} - e^{\mathrm{i}\xi^{\mathsf{T}}(X-Y^{\prime})} - e^{\mathrm{i}\xi^{\mathsf{T}}(Y-X^{\prime})} + e^{\mathrm{i}\xi^{\mathsf{T}}(Y-Y^{\prime})}\right] \notag \\
+\label{eq:2.5}
+&= \EE[\cos(\xi^{\mathsf{T}}(X-X^{\prime}))] - 2\EE[\cos(\xi^{\mathsf{T}}(X-Y))] + \EE[\cos(\xi^{\mathsf{T}}(Y-Y^{\prime}))],
+\end{align}
+where in the last step we used the fact that $(X,Y')$ and $(X,Y)$ have the same joint distribution $\mu\otimes\nu$,
+and similarly $\EE[\cos(\xi^{\mathsf{T}}(Y-X'))] = \EE[\cos(\xi^{\mathsf{T}}(X-Y))]$ by the symmetry of $\cos$.
+Now, let $Z$ be a random variable with density $\rho/\Phi(0)$, independent of $(X,X',Y,Y')$.
+Integrating \eqref{eq:2.5} against $\rho(\xi)d\xi$ and using \eqref{eq:2.4}, we arrive at the representation
+\begin{equation}
+\label{eq:repre}
+ \gamma_K(\mu,\nu)^2 = \Phi(0)\,\EE\left[\cos(Z^{\mathsf{T}}(X-X^{\prime})) - 2 \cos(Z^{\mathsf{T}}(X-Y)) + \cos(Z^{\mathsf{T}}(Y-Y^{\prime})) \right].
+\end{equation}
+
+\begin{rem}\label{rem:2.1}
+The representation \eqref{eq:repre} also shows that $\gamma_K$ metrizes the weak topology on $\cP(\RR^d)$ under $(A)$.
+See \cite[Proposition 2.1]{nak:2024sb} for a proof.
+\end{rem}
+
+\begin{ex}\label{ex:2.2}
+The Gaussian kernel $K(x,y)=e^{-\alpha|x-y|^2}$, $\alpha>0$, satisfies assumption $(A)$. 
+Indeed, $K(x,y)=\Phi(x-y)$ with $\Phi(z)=e^{-\alpha|z|^2}$ bounded, continuous, and integrable on $\RR^d$,
+and its inverse Fourier transform
+$\rho(\xi)=(2\pi)^{-d/2}\widehat\Phi(\xi)=(4\alpha)^{-d/2}e^{-|\xi|^2/(4\alpha)}>0$
+is the density of $\mathcal{N}(0,2\alpha I_d)/\Phi(0)$ up to the normalising constant $\Phi(0)=1$.
+Hence $\Phi(0)=1$ and the random frequency in \eqref{eq:repre} satisfies $Z\sim \mathcal{N}(0,2\alpha I_d)$.
+\end{ex}
+
+
+%%%------------------------------------------------------------------------
+\section{Unbiased estimator via random Fourier $U$-statistics}\label{sec:3}
+%%%------------------------------------------------------------------------
+
+Throughout the remainder of the paper we fix a complete probability space $(\Omega,\mathcal{F},\PP)$
+on which all random variables are defined,
+and we denote by $\EE$ the corresponding expectation.
+
+%%
+\subsection{Construction of the estimator}\label{sec:3.1}
+
+The representation \eqref{eq:repre} suggests a Monte Carlo approach:
+draw $Z_1,\ldots,Z_M$ i.i.d.\ from the density $\rho/\Phi(0)$ and approximate $\gamma_K^2$ by averaging over the random frequencies.
+Given i.i.d.\ samples $X_1,\ldots,X_N\sim\mu$ and $Y_1,\ldots,Y_N\sim\nu$,
+we define for each $z\in\RR^d$ the following quantities:
+\begin{equation}
+\label{eq:3.1}
+ S_c^X(z) := \sum_{i=1}^N\cos(z^{\mathsf{T}}X_i), \quad
+ S_s^X(z) := \sum_{i=1}^N\sin(z^{\mathsf{T}}X_i),
+\end{equation}
+and similarly $S_c^Y(z)$, $S_s^Y(z)$ for the $Y$-samples.
+
+The key observation is that the $U$-statistic for $\EE[\cos(z^{\mathsf{T}}(X-X'))]$ can be computed in $O(N)$:
+\begin{equation}
+\label{eq:3.2}
+ U_{XX}(z) := \frac{(S_c^X(z))^2 + (S_s^X(z))^2 - N}{N(N-1)}.
+\end{equation}
+Indeed, expanding the squares and using the trigonometric identity $\cos(a-b) = \cos a\cos b + \sin a\sin b$, we get 
+\begin{align*}
+ (S_c^X)^2 + (S_s^X)^2
+ &= \sum_{i,j=1}^N (\cos(z^{\mathsf{T}}X_i)\cos(z^{\mathsf{T}}X_j) + \sin(z^{\mathsf{T}}X_i)\sin(z^{\mathsf{T}}X_j)) \\
+ &= \sum_{i,j=1}^N \cos(z^{\mathsf{T}}(X_i - X_j)) = N + \sum_{i\neq j}\cos(z^{\mathsf{T}}(X_i - X_j)).
+\end{align*}
+Dividing by $N(N-1)$ yields an unbiased estimator of $\EE[\cos(z^{\mathsf{T}}(X-X'))]$.
+
+Similarly, the cross term $\EE[\cos(z^{\mathsf{T}}(X-Y))]$ is estimated by
+\begin{equation}
+\label{eq:3.3}
+ V_{XY}(z) := \frac{S_c^X(z)\,S_c^Y(z) + S_s^X(z)\,S_s^Y(z)}{N^2},
+\end{equation}
+which is unbiased since $X_i$ and $Y_j$ are always from independent samples.
+
+Combining the representation \eqref{eq:repre} with the Monte Carlo approach,
+we propose the \emph{RF $U$-statistic estimator}: given i.i.d.\ random frequencies
+$Z_1,\ldots,Z_M\sim\rho/\Phi(0)$ independent of the data, set
+\begin{equation}
+\label{eq:3.4}
+ \hat{\gamma}_{M,N}^2 := \frac{\Phi(0)}{M}\sum_{r=1}^M\left[U_{XX}(Z_r) - 2V_{XY}(Z_r) + U_{YY}(Z_r)\right].
+\end{equation}
+
+The following theorem collects the basic properties of our penalty term. 
+The proof is given in Section~\ref{sec:6.1}.
+
+\begin{thm}[Unbiasedness, complexity, and variance]\label{thm:rfu_unbiased}
+Suppose $(A)$ holds.
+Let $X_1,\ldots,X_N$ with $N\ge 2$, $Y_1,\ldots,Y_N$, and $Z_1,\ldots,Z_M$ with $M\ge 1$
+be three mutually independent collections of i.i.d.\ random variables
+with $X_i\sim\mu$, $Y_j\sim\nu$, and $Z_r\sim\rho/\Phi(0)$.
+Then the following hold.
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item $\EE[\hat{\gamma}_{M,N}^2] = \gamma_K(\mu,\nu)^2$.
+\item The computational complexity of $\hat{\gamma}_{M,N}^2$ is $O(NM)$.
+\item $\mathrm{Var}(\hat{\gamma}_{M,N}^2) = O(1/M) + O(1/N)$.
+\end{enumerate}
+\end{thm}
+
+\begin{rem}\label{rem:3.2}
+The standard RFF approach computes a $V$-statistic
+$|\frac{1}{N}\sum_i \phi(X_i) - \frac{1}{N}\sum_j \phi(Y_j)|^2$ with positive bias of order $\Phi(0)/N$ when $\mu=\nu$.
+Our $\hat{\gamma}_{M,N}^2$ eliminates this bias while preserving the $O(NM)$ complexity,
+which avoids a non-vanishing penalty floor at the population level
+and yields the clean variance decomposition of Theorem~\ref{thm:rfu_unbiased}(iii)
+and the explicit a.s.\ rate of Proposition~\ref{prop:rate} below
+without any bias-correction term.
+Empirically the bias is mild near the optimum. 
+Section~\ref{sec:5.1.3vs} shows that the trained drifts from the biased $V$-statistic and the unbiased $U$-statistic
+are indistinguishable across the tested range of $(N,\lambda)$.
+The unbiased construction is thus preferred for theoretical reasons rather than for an immediate empirical accuracy gain.
+\end{rem}
+
+
+%%
+\subsection{Estimator for the kernel interaction cost}\label{sec:3.1interaction}
+
+The same Fourier $U$-statistic construction extends to the running interaction cost $\mathcal{R}[\nu]$ defined by \eqref{eq:4.cost_decomp}.
+Suppose $(A)$ holds for the congestion kernel $W(x,y) = \Psi(x-y)$,
+with generating density $\rho_W(\xi):=(2\pi)^{-d/2}\widehat{\Psi}(\xi)>0$.
+The Fourier inversion formula and Fubini's theorem (cf.\ Section~\ref{sec:2.2}) then give
+\begin{equation}\label{eq:repre_R}
+ \iint\nolimits_{\RR^d\times\RR^d} W(x,y)\,\nu(dx)\nu(dy)
+ = \Psi(0)\,\EE\bigl[\cos(\tilde Z^{\mathsf{T}}(X-X'))\bigr],
+\end{equation}
+where $\tilde Z\sim \rho_W/\Psi(0)$ and $X,X'$ is an independent pair of samples from $\nu$,
+all mutually independent.
+Given i.i.d.\ samples $X_1,\ldots,X_N\sim\nu$ ($N\ge 2$)
+and i.i.d.\ random frequencies $\tilde Z_1,\ldots,\tilde Z_M\sim\rho_W/\Psi(0)$ ($M\ge 1$),
+independent of the data, define
+\begin{equation}\label{eq:3.5}
+ \hat{\mathcal{R}}_{M,N}[\hat\nu^N]
+ := \frac{\Psi(0)}{2M}\sum_{r=1}^M U_{XX}(\tilde Z_r)
+ = \frac{\Psi(0)}{2M}\sum_{r=1}^M\frac{S_c^X(\tilde Z_r)^2+S_s^X(\tilde Z_r)^2-N}{N(N-1)},
+\end{equation}
+where $U_{XX}$, $S_c^X$, $S_s^X$ are as in \eqref{eq:3.1}--\eqref{eq:3.2}
+evaluated at the single sample collection $\{X_i\}_{i=1}^N$.
+The estimator \eqref{eq:3.5} is the natural analogue of $\hat\gamma_{M,N}^2$ for the
+self-interaction kernel functional $\frac{1}{2}\iint W\,d\nu\otimes d\nu$:
+it removes the diagonal bias of the $V$-statistic via the same trigonometric identity
+and is also evaluable in $O(NM)$.
+
+\begin{thm}[Properties of the interaction estimator]\label{thm:rfu_interaction}
+Suppose $(A)$ holds for $W$.
+Let $X_1,\ldots,X_N$ with $N\ge 2$ and $\tilde Z_1,\ldots,\tilde Z_M$ with $M\ge 1$
+be two mutually independent collections of i.i.d.\ random variables
+with $X_i\sim\nu$ and $\tilde Z_r\sim\rho_W/\Psi(0)$. Then
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item $\EE\bigl[\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\bigr] = \mathcal{R}[\nu]$.
+\item The computational complexity of $\hat{\mathcal{R}}_{M,N}[\hat\nu^N]$ is $O(NM)$.
+\item $\mathrm{Var}\bigl(\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\bigr) = O(1/M) + O(1/N)$.
+\end{enumerate}
+\end{thm}
+
+\begin{proof}
+The proof is parallel to that of Theorem~\ref{thm:rfu_unbiased}
+and is given in Section~\ref{sec:6.1interaction}.
+\end{proof}
+
+
+%%%------------------------------------------------------------------------
+\section{Potential mean-field game formulation and convergence analysis}\label{sec:4}
+%%%------------------------------------------------------------------------
+
+\subsection{Potential MFG with kernel costs}\label{sec:4.1mfg}
+
+Fix the horizon $T>0$, the diffusion coefficient $\sigma>0$,
+the initial law $\mu_0\in\cP(\RR^d)$ with finite second moment,
+and the \emph{deadline target} $\mu_T\in\cP(\RR^d)$ with finite second moment.
+Here $\mu_T$ prescribes the distribution that the controlled population is required
+to attain at the terminal time $t=T$,
+and the deviation $\mathcal{L}(X_T)$ from $\mu_T$ is enforced softly via a kernel-MMD penalty
+(introduced in \eqref{eq:4.1mfg} below).
+For instance, in the EV charging fleet of Section~\ref{sec:5ev},
+$\mu_T$ is the desired state-of-charge distribution of the fleet at the end of the operational horizon.
+We fix a reproducing kernel $K:\RR^d\times\RR^d\to\RR$ satisfying assumption $(A)$
+with generating function $\Phi$, the terminal penalty weight $\lambda>0$, and the congestion weight $c\ge 0$.
+The running mean-field cost $\mathcal{R}:\cP(\RR^d)\to[0,\infty)$ is a non-negative weakly continuous functional,
+specified later either as a self-interaction integral with a kernel $W$ satisfying $(A)$
+(Section~\ref{sec:3.1interaction} and \eqref{eq:4.cost_decomp} below),
+or as the aggregate-demand cost used in the EV application of Section~\ref{sec:5ev}.
+
+We endow the probability space $(\Omega,\mathcal{F},\PP)$ of Section~\ref{sec:3}
+with a filtration $\{\mathcal{F}_t\}_{t\in[0,T]}$ satisfying the usual conditions,
+and assume that it supports a $d$-dimensional $\{\mathcal{F}_t\}$-Brownian motion $B$
+and an $\mathcal{F}_0$-measurable random variable $X_0\sim\mu_0$ independent of $B$.
+The controlled state equation is
+\begin{equation}\label{eq:4.0}
+ dX_t = u(t,X_t)\,dt + \sigma\,dB_t,\quad X_0\sim\mu_0,\quad t\in[0,T].
+\end{equation}
+We define the class of \emph{admissible controls} $\mathcal{A}$
+as the set of Borel measurable functions $u:[0,T]\times\RR^d\to\RR^d$
+for which \eqref{eq:4.0} admits a unique strong solution $X$
+satisfying $\EE\bigl[\int_0^T|u(t,X_t)|^2 dt\bigr]<\infty$.
+For example, any Borel function $u$ that is bounded and Lipschitz in $x$ (uniformly in $t$) belongs to $\mathcal{A}$.
+
+The \emph{potential mean-field game} we consider is
+\begin{equation}\label{eq:4.1mfg}
+ H^*_{\lambda,c} := \inf_{u\in\mathcal{A}}\left\{
+ \frac{1}{2}\EE\left[\int_0^T |u(t,X_t)|^2 dt\right]
+ + c\int_0^T\mathcal{R}\bigl[\mathcal{L}(X_t)\bigr]\,dt
+ + \lambda \mathcal{T}\bigl[\mathcal{L}(X_T)\bigr]\right\},
+\end{equation}
+where the kernel-based interaction and terminal costs are
+\begin{equation}\label{eq:4.cost_decomp}
+ \mathcal{R}[\nu] = \frac{1}{2}\iint\nolimits_{\RR^d\times\RR^d}W(x,y)\,\nu(dx)\,\nu(dy),
+ \qquad
+ \mathcal{T}[\nu] = \gamma_K(\nu,\mu_T)^2.
+\end{equation}
+The interaction $\mathcal{R}$ is a quadratic functional of the population law and admits the variational derivative
+$\delta\mathcal{R}[\nu]/\delta\nu(x) = \int W(x,y)\,\nu(dy)$,
+making \eqref{eq:4.1mfg} a potential MFG in the sense of Lasry--Lions~\cite{las-lio:2007};
+the terminal cost $\mathcal{T}[\nu]$ has variational derivative
+$\delta\mathcal{T}[\nu]/\delta\nu(x) = 2\bigl(\int K(x,y)\nu(dy)-\int K(x,y)\mu_T(dy)\bigr)$
+and equals zero exactly when $\nu=\mu_T$.
+
+\begin{rem}[Behaviour of $\mathcal{R}$]\label{rem:R_behaviour}
+Under $(A)$, the Bochner representation gives
+$\mathcal{R}[\nu] = \frac{1}{2}\int|\hat\nu(\xi)|^2\rho_W(\xi)\,d\xi$,
+so $\mathcal{R}$ takes values in $[0,\Psi(0)/2]$, is translation invariant,
+and is monotone in the concentration of $\nu$. 
+The maximum $\Psi(0)/2$ is attained at Dirac masses and $\mathcal{R}[\nu]\to 0$ as $\nu$ spreads.
+For the Gaussian $W(x,y)=e^{-\alpha|x-y|^2}$ and $\nu=\mathcal{N}(m,\sigma^2 I_d)$,
+$\mathcal{R}[\nu]=\frac{1}{2}(1+4\alpha\sigma^2)^{-d/2}$.
+The bandwidth $\alpha$ thus controls the scale at which population concentration is penalized, and 
+$c\int_0^T\mathcal{R}[\mathcal{L}(X_t)]\,dt$ incentivizes the optimal drift to spread agents apart on the scale $\alpha^{-1/2}$.
+\end{rem}
+
+At each iteration the cost in \eqref{eq:4.1mfg} is estimated from $N$ i.i.d.\ controlled-path samples
+$X^{(1)},\ldots,X^{(N)}$ of \eqref{eq:4.0} under the candidate $u$,
+$N$ i.i.d.\ target samples $Y^{(1)},\ldots,Y^{(N)}\sim\mu_T$,
+and $M$ random frequencies for each kernel
+(all jointly independent; see Algorithm~\ref{alg:sbp} for the precise schedule).
+Writing $\hat\nu^N_t := \frac{1}{N}\sum_{i=1}^N\delta_{X^{(i)}_t}$ for the empirical distribution at time $t$,
+the empirical kernel costs are
+\begin{align}
+\label{eq:4.empF}
+ \hat{\mathcal{R}}_{M,N}[\hat\nu^N_t]
+ &:= \frac{\Psi(0)}{M}\sum_{r=1}^M\frac{S_c^{X_t}(\tilde Z_r)^2 + S_s^{X_t}(\tilde Z_r)^2 - N}{2N(N-1)},\\
+\label{eq:4.empG}
+ \hat{\mathcal{T}}_{M,N}[\hat\nu^N_T,\mu_T]
+ &:= \hat\gamma_{M,N}^2\bigl(\hat\nu^N_T,\mu_T\bigr),
+\end{align}
+where $\hat\gamma_{M,N}^2$ is the RF $U$-statistic estimator of Section~\ref{sec:3}
+applied to the terminal samples,
+and $S_c^{X_t}, S_s^{X_t}$ are the trigonometric sums of \eqref{eq:3.1} evaluated at the $N$ controlled paths at time $t$.
+The empirical mean-field game problem is
+\begin{equation}\label{eq:4.2}
+ \hat H_{\lambda,c,M,N}
+ := \inf_{u\in\mathcal{A}}\left\{
+ \frac{1}{2N}\sum_{i=1}^N\int_0^T|u(t,X^{(i)}_t)|^2 dt
+ + c\int_0^T\hat{\mathcal{R}}_{M,N}[\hat\nu^N_t]\,dt
+ + \lambda\,\hat{\mathcal{T}}_{M,N}[\hat\nu^N_T,\mu_T]\right\}.
+\end{equation}
+Note that the infimum is taken over deterministic feedback controls $u\in\mathcal{A}$. 
+The objective is a random functional of $u$ through the four sample collections,
+and at each gradient step Algorithm~\ref{alg:sbp} (Section~\ref{sec:4.3alg})
+draws a fresh independent realization (see Remark~\ref{rem:3.3}).
+
+\begin{rem}[Schr{\"o}dinger-bridge specialization]\label{rem:sbp_specialization}
+Setting $c=0$ and $T=1$ in \eqref{eq:4.1mfg} reduces the potential MFG to the kernel-MMD-penalty Schr{\"o}dinger bridge of \cite{nak:2024sb}, namely
+\begin{equation}\label{eq:4.1sbp}
+ H^*_{\lambda,0}\bigr|_{T=1}
+ = \inf_{u\in\mathcal{A}}\left\{\frac{1}{2}\EE\left[\int_0^1|u(t,X_t)|^2\,dt\right]
+ + \lambda\,\gamma_K(\mathcal{L}(X_1),\mu_1)^2\right\}.
+\end{equation}
+The sample-level convergence theorem for this special case is given as Corollary~\ref{cor:sbp_special_case} below.
+\end{rem}
+
+\begin{rem}\label{rem:weak_vs_strong}
+The classical mean-field game and Schr{\"o}dinger bridge problems are often formulated in the \emph{weak} sense,
+where the probability space and the driving Brownian motion are themselves part of the optimization
+(see, e.g., \cite{leo:2014}).
+Since the conclusions of our convergence analysis (Theorem~\ref{thm:convergence} below)
+depend only on the laws of the controlled processes and on the empirical value $\hat H_{\lambda,c,M,N}$,
+both of which are invariant under the choice of the underlying probability space,
+the strong-solution formulation based on $\mathcal{A}$ adopted here is sufficient
+and matches the implementation in Algorithm~\ref{alg:sbp},
+where $u$ is parametrized as a neural network feedback.
+\end{rem}
+
+\subsection{Sample-level convergence}\label{sec:4.2conv}
+
+
+%%
+
+Before stating the main theorem, we record the strong consistency of the empirical objective,
+which underlies the convergence analysis.
+
+\begin{lem}[Strong consistency of the MMD estimator]\label{lem:strong_consistency}
+Suppose that $(A)$ holds.
+Let $\{M_n\}_{n\ge 1}$ and $\{N_n\}_{n\ge 1}$ be deterministic sequences with $N_n\to\infty$
+and $M_n/\log n\to\infty$.
+Then, for any $\mu,\nu\in\cP(\RR^d)$,
+\[
+ \hat{\gamma}_{M_n,N_n}^2 \longrightarrow \gamma_K(\mu,\nu)^2 \quad n\to\infty, \:\;\text{a.s.}
+\]
+\end{lem}
+
+\begin{proof}
+See Section~\ref{sec:6.LemSC}.
+\end{proof}
+
+Kolmogorov's strong law of large numbers immediately yields the following: 
+\begin{lem}[Strong consistency of the empirical energy]\label{lem:energy_consistency}
+Fix a deterministic feedback control $u\in\mathcal{A}$.
+Let $(B^{(i)},X_0^{(i)})_{i\ge 1}$ be a sequence of independent copies of $(B,X_0)$
+(with $B$, $X_0$, and $\mu_0$ as in \eqref{eq:4.0}),
+and let $X^{(i)}$ denote the unique strong solution of \eqref{eq:4.0} driven by $(B^{(i)},X_0^{(i)})$ under the control $u$.
+Then the $X^{(i)}$ are i.i.d.\ copies of the controlled process $X$, and
+\[
+ \frac{1}{N}\sum_{i=1}^N \int_0^1 |u(t,X_t^{(i)})|^2 dt
+ \;\longrightarrow\; \EE\!\left[\int_0^1 |u(t,X_t)|^2 dt\right], \quad N\to\infty, \;\;\text{a.s.}
+\]
+\end{lem}
+
+We are now in a position to state the main convergence result for the empirical mean-field game problem~\eqref{eq:4.2}.
+Put 
+\[
+H^*_c = \inf_{u\in\mathcal{A}}\left\{\frac{1}{2}\EE\left[\int_0^T|u(t,X_t)|^2\,dt\right]+c\int_0^T\mathcal{R}[\mathcal{L}(X_t)]\,dt:\mathcal{L}(X_T)=\mu_T\right\}.
+\]
+\begin{thm}[Convergence for the potential MFG]\label{thm:convergence}
+Suppose that $\mu_0$ and $\mu_T$ have finite second moments and that $(A)$ holds
+for the kernels $K$ and $W$.
+Fix the congestion weight $c\ge 0$.
+Let $\{\lambda_n\}$, $\{M_n\}$, $\{N_n\}$, and $\{\varepsilon_n\}$ be deterministic sequences
+satisfying $\lambda_n,\varepsilon_n>0$, $M_n,N_n\in\mathbb{N}$, and
+\begin{equation}\label{eq:4.cond}
+ \lambda_n\to\infty,\quad N_n\to\infty,\quad M_n/\log n\to\infty,\quad
+ \varepsilon_n\to 0,\quad \lambda_n\varepsilon_n\to 0, \quad n\to\infty.
+\end{equation}
+For each $n$, let $u_n\in\mathcal{A}$ be an $\varepsilon_n$-optimal admissible control for the empirical MFG \eqref{eq:4.2}
+with $\lambda=\lambda_n$, $c$ fixed, $M=M_n$, $N=N_n$,
+and let $X^{(n)}$ denote the controlled process generated under $u_n$ on
+i.i.d.~ sample paths $X^{(n,1)},\ldots,X^{(n,N_n)}$, target i.i.d.\ samples $Y^{(n,1)},\ldots,Y^{(n,N_n)}\sim\mu_T$,
+and i.i.d.\ random frequencies $Z^{(n)}_1,\ldots,Z^{(n)}_{M_n}\sim\rho_K/\Phi(0)$
+and $\tilde Z^{(n)}_1,\ldots,\tilde Z^{(n)}_{M_n}\sim\rho_W/\Psi(0)$,
+all drawn independently of the data used to construct $u_n$.
+Then, almost surely,
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item $\displaystyle \lim_{n\to\infty}\sqrt{\lambda_n}\,\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)=0$,
+\item $\displaystyle \lim_{n\to\infty}\hat H_{\lambda_n,c,M_n,N_n} = H^*_c$. 
+\end{enumerate}
+\end{thm}
+\begin{proof}
+See Section~\ref{sec:6.2}.
+\end{proof}
+
+\begin{cor}[Schr{\"o}dinger-bridge specialization]\label{cor:sbp_special_case}
+Suppose that $c=0$ and $T=1$.
+Under the same conditions \eqref{eq:4.cond} but with $(A)$ required only for $K$,
+the $\varepsilon_n$-optimal control $u_n$ of the empirical SBP penalty problem satisfies, almost surely,
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item $\displaystyle \lim_{n\to\infty}\sqrt{\lambda_n}\,\gamma_K(\mathcal{L}(X_1^{(n)}),\mu_1)=0$,
+\item $\displaystyle \lim_{n\to\infty}\hat H_{\lambda_n,0,M_n,N_n} = H^*$,
+\end{enumerate}
+where $H^*$ denotes the Schr{\"o}dinger-bridge value
+\[
+ H^* := H^*_c\bigr|_{c=0,\,T=1}
+ = \inf_{u\in\mathcal{A}}\left\{\frac{1}{2}\EE\!\left[\int_0^1|u(t,X_t)|^2\,dt\right]:\,\mathcal{L}(X_1)=\mu_1\right\}.
+\]
+\end{cor}
+
+\begin{prop}[Convergence with a general running cost]\label{prop:convergence_general}
+Let $\mathcal{R}:\cP(\RR^d)\to[0,\infty)$ be a non-negative functional that is continuous in the weak topology of $\cP(\RR^d)$,
+and, for each $N\ge 2$, let $\hat{\mathcal{R}}_N:(\RR^d)^N\to[0,\infty)$ be a Borel measurable symmetric function;
+for $\nu\in\cP(\RR^d)$ and i.i.d.\ random variables $\xi_1,\ldots,\xi_N\sim\nu$,
+write $\hat{\mathcal{R}}_N[\hat\nu^N]:=\hat{\mathcal{R}}_N(\xi_1,\ldots,\xi_N)$
+where $\hat\nu^N:=N^{-1}\sum_{i=1}^N\delta_{\xi_i}$.
+Assume that $\hat{\mathcal{R}}_N$ is strongly consistent:
+for every $\nu\in\cP(\RR^d)$ and every deterministic sequence $\{N_n\}$ with $N_n\to\infty$,
+\begin{equation}\label{eq:4.R_general_consistency}
+ \hat{\mathcal{R}}_{N_n}[\hat\nu^{N_n}]\;\xrightarrow{\rm a.s.}\;\mathcal{R}[\nu]\qquad(n\to\infty).
+\end{equation}
+Define the modified empirical MFG by replacing $c\hat{\mathcal{R}}_{M,N}[\hat\nu^N_t]$ in \eqref{eq:4.2} by $c\hat{\mathcal{R}}_{N}[\hat\nu^N_t]$,
+and denote the resulting value by $\hat H_{\lambda,c,M,N}^{(\mathcal{R})}$.
+
+Suppose that $\mu_0$ and $\mu_T$ have finite second moments,
+that $(A)$ holds for the terminal kernel $K$,
+that $\{\lambda_n\},\{M_n\},\{N_n\},\{\varepsilon_n\}$ are deterministic sequences satisfying
+$\lambda_n,\varepsilon_n>0$, $M_n,N_n\in\mathbb{N}$, and \eqref{eq:4.cond},
+and that for each $n\ge 1$, $u_n\in\mathcal{A}$ is an $\varepsilon_n$-optimal admissible control
+for $\hat H_{\lambda_n,c,M_n,N_n}^{(\mathcal{R})}$.
+Let $X^{(n)}$ denote the controlled process generated under $u_n$
+on fresh sample paths $X^{(n,1)},\ldots,X^{(n,N_n)}$, target i.i.d.\ samples $Y^{(n,1)},\ldots,Y^{(n,N_n)}\sim\mu_T$,
+and i.i.d.\ random frequencies $Z^{(n)}_1,\ldots,Z^{(n)}_{M_n}\sim\rho_K/\Phi(0)$,
+all drawn independently of the data used to construct $u_n$.
+Then, almost surely,
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item $\displaystyle \lim_{n\to\infty}\sqrt{\lambda_n}\,\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)=0$,
+\item $\displaystyle \lim_{n\to\infty}\hat H_{\lambda_n,c,M_n,N_n}^{(\mathcal{R})} = H^*_c$,
+\end{enumerate}
+where
+\[
+ H^*_c \;:=\; \inf_{u\in\mathcal{A}}\Bigl\{\tfrac{1}{2}\EE\!\left[\int_0^T|u(t,X_t)|^2\,dt\right] + c\int_0^T\mathcal{R}[\mathcal{L}(X_t)]\,dt
+ :\,\mathcal{L}(X_T)=\mu_T\Bigr\}.
+\]
+\end{prop}
+\begin{proof}
+See Section~\ref{sec:6.2gen}.
+\end{proof}
+
+The condition $\lambda_n\varepsilon_n\to 0$ requires the optimization tolerance $\varepsilon_n$
+to vanish faster than the inverse penalty $1/\lambda_n$.
+The rate condition $M_n/\log n\to\infty$ is mild
+and is automatically satisfied by any practical choice such as $M_n$ polynomial in $n$.
+It is used in Lemma~\ref{lem:strong_consistency} to ensure 
+that the random fluctuation $\hat{\gamma}_{M_n,N_n}^2 - \gamma_K^2$ vanishes almost surely, 
+which in turn underlies the almost-sure convergence claimed below.
+Combined with $\lambda_n\varepsilon_n\to 0$, this ensures that the penalty fluctuation
+is dominated by the penalty growth.
+
+Theorem~\ref{thm:convergence} is established at the \emph{sample} level, directly for the empirical objective \eqref{eq:4.2} minimized by Algorithm~\ref{alg:sbp}, in contrast to the population-level analyses of \cite{nak:2024sb,sai-nak:2025},
+which work with the exact $\gamma_K^2$ and the expected energy.
+This reduction is enabled by Lemmas~\ref{lem:strong_consistency} and \ref{lem:energy_consistency}.
+
+The almost-sure convergence in Theorem~\ref{thm:convergence} (i) can be sharpened into an explicit rate
+by upgrading Lemma~\ref{lem:strong_consistency} to its quantitative Hoeffding form,
+making the trade-off between the penalty schedule and the sample/feature counts explicit.
+
+\begin{prop}[Rate of convergence, SBP case]\label{prop:rate}
+Suppose the hypotheses of Corollary~$\ref{cor:sbp_special_case}$ hold. Suppose moreover that the following hold:
+\begin{itemize}
+\item[\textup{(H1)}] There exist $L\ge 0$ and an optimal control $u^*\in\mathcal{A}$ for \eqref{eq:4.1sbp}
+such that $\|u^*\|_\infty\le L$ and $\|u_n\|_\infty\le L$ for every $n\ge 1$,
+where $\|u\|_\infty:=\sup_{(t,x)\in[0,1]\times\RR^d}|u(t,x)|$.
+\item[\textup{(H2)}] At each $n\ge 1$, the samples
+$\{X^{(n,i)}\}_{i=1}^{N_n}$, $\{Y^{(n,j)}\}_{j=1}^{N_n}$, $\{Z_r^{(n)}\}_{r=1}^{M_n}$
+appearing in \eqref{eq:4.2} are independent of the random elements used to construct $u_n$.
+\end{itemize}
+Then there exists a constant $C^*>0$, depending only on $\Phi(0)$ and $L$, such that, for all sufficiently large $n$, almost surely, the \emph{observable} empirical penalty satisfies
+\begin{equation}\label{eq:4.rate_emp}
+ \hat{\gamma}_{M_n,N_n}^2\bigl(\mathcal{L}(X_1^{(n)}),\mu_1\bigr)
+ \;\le\; \frac{H^* + \varepsilon_n}{\lambda_n}
+ \;+\; C^*\!\left(\sqrt{\frac{\log n}{M_n}} + \sqrt{\frac{\log n}{N_n}}\right),
+\end{equation}
+and consequently the population-level discrepancy satisfies
+\begin{equation}\label{eq:4.rate}
+ \gamma_K\bigl(\mathcal{L}(X_1^{(n)}),\mu_1\bigr)^2
+ \;\le\; \frac{H^* + \varepsilon_n}{\lambda_n}
+ \;+\; 2C^*\!\left(\sqrt{\frac{\log n}{M_n}} + \sqrt{\frac{\log n}{N_n}}\right).
+\end{equation}
+In particular, with the polynomial schedule $\lambda_n=n^a$, $M_n=N_n=n^b$, $\varepsilon_n=n^{-e}$
+($a,b,e>0$ and $e\ge a$), the right-hand sides of \eqref{eq:4.rate_emp}--\eqref{eq:4.rate} are
+both $O(n^{-\min(a,\,b/2)}(\log n)^{1/2})$, and the optimal balance $b=2a$ gives
+\[
+ \gamma_K\bigl(\mathcal{L}(X_1^{(n)}),\mu_1\bigr) = O\!\left(n^{-a/2}(\log n)^{1/4}\right)\quad\text{a.s.}
+\]
+\end{prop}
+
+\begin{proof}
+See Section~\ref{sec:6.3rate}.
+\end{proof}
+
+\begin{rem}\label{rem:rate}
+The two bounds in Proposition~\ref{prop:rate} are complementary:
+\eqref{eq:4.rate_emp} is verifiable from data
+(computed on a fresh evaluation batch in Section~\ref{sec:5}),
+while \eqref{eq:4.rate} is the theoretical guarantee on the unobservable distributional distance $\gamma_K(\mathcal{L}(X_1^{(n)}),\mu_1)$.
+Both decompose the error into the penalty bias $H^*/\lambda_n$,
+the optimization tolerance $\varepsilon_n/\lambda_n$,
+and the sample/feature concentration $\sqrt{\log n/M_n}+\sqrt{\log n/N_n}$
+(the latter reduces to $\sqrt{\log n/N_n}$ in the kernel $U$-statistic limit of Corollary~\ref{cor:kernel_convergence}).
+Hypothesis (H1) is automatic for drift networks with bounded output activations or weight clipping,
+and can be relaxed to a uniform $L^4$-moment bound at the cost of using Bernstein's inequality;
+(H2) holds whenever \eqref{eq:4.2} is evaluated on a fresh batch.
+\end{rem}
+
+\begin{prop}[Rate of convergence for the potential MFG]\label{prop:rate_mfg}
+Suppose the hypotheses of Theorem~\ref{thm:convergence} hold,
+together with the analogues of (H1)--(H2) for the MFG horizon $[0,T]$,
+namely $\|u^*\|_\infty\le L$ and $\|u_n\|_\infty\le L$ for every $n\ge 1$ with $\|u\|_\infty:=\sup_{(t,x)\in[0,T]\times\RR^d}|u(t,x)|$,
+and at each $n\ge 1$ the samples $\{X^{(n,i)}\}_{i=1}^{N_n}$, $\{Y^{(n,j)}\}_{j=1}^{N_n}$,
+$\{Z_r^{(n)}\}_{r=1}^{M_n}$, $\{\tilde Z_r^{(n)}\}_{r=1}^{M_n}$ appearing in \eqref{eq:4.2}
+are independent of the random elements used to construct $u_n$.
+Then there exists a constant $C^*_c>0$, depending on $\Phi(0),\Psi(0),L,c,T$ only, such that
+\begin{equation}\label{eq:4.rate_mfg}
+ \gamma_K\bigl(\mathcal{L}(X_T^{(n)}),\mu_T\bigr)^2
+ \;\le\; \frac{H^*_c + \varepsilon_n}{\lambda_n}
+ \;+\; C^*_c\!\left(\sqrt{\frac{\log n}{M_n}} + \sqrt{\frac{\log n}{N_n}}\right)
+\end{equation}
+for all sufficiently large $n$, almost surely;
+in particular, under the polynomial schedule of Proposition~\ref{prop:rate},
+$\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)=O(n^{-a/2}(\log n)^{1/4})$ a.s.
+\end{prop}
+\begin{proof}
+See Section~\ref{sec:6.3rate_mfg}.
+\end{proof}
+
+
+The limit $M\to\infty$ in Theorem~\ref{thm:convergence} corresponds to replacing the random Fourier
+$U$-statistic by the kernel $U$-statistic estimator $\bar{\gamma}_K^2(D)$
+(cf.~\eqref{eq:empirical_mmd} and the proof of Theorem~\ref{thm:rfu_unbiased}(iii) in Section~\ref{sec:6.1}),
+evaluated on the controlled-path terminal samples $X_1^{(1)},\ldots,X_1^{(N)}$ and target i.i.d.\ samples $Y^{(1)},\ldots,Y^{(N)}\sim\mu_T$:
+\begin{equation}\label{eq:4.kernelUstat}
+ \bar{\gamma}_K^2(D)
+ = \frac{1}{N(N-1)}\sum_{i\neq j}K(X_1^{(i)},X_1^{(j)})
+   - \frac{2}{N^2}\sum_{i,j}K(X_1^{(i)},Y^{(j)})
+   + \frac{1}{N(N-1)}\sum_{i\neq j}K(Y^{(i)},Y^{(j)}).
+\end{equation}
+This is the population MMD${}^2$ estimator used in \cite{nak:2024sb}.
+The corresponding empirical penalty problem is
+\begin{equation}\label{eq:4.kernel_pen}
+ \hat{H}_{\lambda,N}^{\mathrm{ker}}
+ := \frac{1}{2}\inf_{u\in\mathcal{A}}\!\left\{
+ \frac{1}{N}\sum_{i=1}^N\!\int_0^1|u(t,X_t^{(i)})|^2 dt
+ + \lambda\,\bar{\gamma}_K^2(D)\right\}.
+\end{equation}
+
+The almost-sure convergence of $\hat{H}_{\lambda_n,N_n}^{\mathrm{ker}}$ to $H^*$ then follows from Theorem~\ref{thm:convergence}, without any rate condition on the random-feature count.
+Formally, the kernel-$U$-statistic penalty problem \eqref{eq:4.kernel_pen}
+is the $M=\infty$ limit of the random Fourier penalty problem \eqref{eq:4.2}
+in the sense that $\hat{\gamma}_{M,N}^2\to \bar{\gamma}_K^2(D)$ a.s.\ as $M\to\infty$ for fixed $N$
+(by the conditional tower decomposition \eqref{eq:6.tower}; see Remark~\ref{rem:6.var}),
+so the next corollary can be read as the limiting case of Theorem~\ref{thm:convergence}
+with the random-feature ingredient replaced by its expectation:
+
+\begin{cor}\label{cor:kernel_convergence}
+Suppose that $\mu_0$ and $\mu_1$ have finite second moments and that $(A)$ holds.
+Let $\{\lambda_n\}$, $\{N_n\}$, and $\{\varepsilon_n\}$ be sequences satisfying
+\[
+ \lambda_n\to\infty,\quad N_n\to\infty,\quad \varepsilon_n\to 0,\quad \text{and}\quad \lambda_n\varepsilon_n\to 0.
+\]
+For each $n$, let $u_n\in\mathcal{A}$ be an $\varepsilon_n$-optimal admissible control for the kernel $U$-statistic
+penalty problem \eqref{eq:4.kernel_pen} with $\lambda=\lambda_n$ and $N=N_n$,
+and let $X^{(n)}$ denote the corresponding controlled process.
+Then, almost surely,
+\begin{enumerate}[label=\textup{(\roman*)}]
+\item $\displaystyle\lim_{n\to\infty}\sqrt{\lambda_n}\,\gamma_K(\mathcal{L}(X_1^{(n)}),\mu_1)=0$,
+\item $\displaystyle\lim_{n\to\infty}\hat{H}_{\lambda_n,N_n}^{\mathrm{ker}} = H^*$.
+\end{enumerate}
+\end{cor}
+
+\begin{proof}
+See Section~\ref{sec:6.4ker}.
+\end{proof}
+
+\begin{rem}\label{rem:cor_nak}
+Corollary~\ref{cor:kernel_convergence} closes the sample-level gap left open by \cite{nak:2024sb},
+whose original analysis works with the exact $\gamma_K^2$ and the expected energy
+even though the implemented algorithm uses their empirical counterparts.
+The same construction extends to the Monge case of \cite{sai-nak:2025};
+see Remark~\ref{rem:4.1}.
+\end{rem}
+
+\begin{rem}\label{rem:4.1}
+An analogous convergence result holds for the Monge problem with $c(x,y)=|x-y|^2$
+under the same conditions \eqref{eq:4.cond}.
+In that case, the conclusions become:
+(i) $\sqrt{\lambda_n}\gamma_K(\mu\circ T_n^{-1},\nu)\to 0$, and
+(ii) $\int |x-T_n(x)|^2 \mu(dx) \to \int |x - T^*(x)|^2 \mu(dx)$,
+where $T^*$ is the optimal transport map.
+See \cite[Theorem~2.1]{sai-nak:2025} for the population-level result and
+the analogue of Corollary~\ref{cor:kernel_convergence} for its sample-based counterpart.
+\end{rem}
+
+
+%%
+\subsection{Algorithm}\label{sec:4.3alg}
+
+The empirical mean-field game problem \eqref{eq:4.2} is implemented by
+parametrizing the drift $u_\theta$ of the controlled SDE \eqref{eq:4.0} as a neural network
+and minimizing the empirical objective by stochastic gradient descent;
+see Algorithm~\ref{alg:sbp}.
+At each iteration the empirical objective is evaluated by combining
+the unbiased $O(NM)$ estimators of $\gamma_K^2$ (Theorem~\ref{thm:rfu_unbiased})
+and of $\mathcal{R}[\nu_t]$ (Theorem~\ref{thm:rfu_interaction}).
+The Schr{\"o}dinger-bridge specialization $c=0$ recovers the algorithm of \cite{nak:2024sb}
+with the $O(N^2)$ kernel $U$-statistic replaced by the $O(NM)$ RF $U$-statistic.
+
+\begin{algorithm}
+\caption{Potential MFG with kernel costs via RF $U$-statistic estimators}
+\label{alg:sbp}
+\begin{algorithmic}[1]
+\Input Number $n$ of iterations, batch size $N$, random-feature count $M$,
+terminal penalty $\lambda>0$, congestion weight $c\ge 0$,
+terminal kernel bandwidth $\alpha_K$, congestion kernel bandwidth $\alpha_W$,
+diffusion coefficient $\sigma>0$, time horizon $T>0$,
+time grid $0=t_0<t_1<\cdots<t_q=T$ with $q\in\mathbb{N}$ grid points.
+\Output Neural-network drift $u_\theta$
+\State Initialize $\theta$
+\For{$\ell=1,2,\ldots,n$}
+      \State $\{Y_j\}_{j=1}^N \gets$ i.i.d.\ samples from $\mu_T$
+      \State $\{Z_r\}_{r=1}^M \gets$ i.i.d.\ samples from $\rho_K/\Phi(0)$, $\{\tilde Z_r\}_{r=1}^M \gets$ i.i.d.\ from $\rho_W/\Psi(0)$
+      \State Simulate $N$ independent paths $\{X_t^{(i)}\}_{t\in[0,T]}$, $i=1,\ldots,N$, via Euler--Maruyama
+      \State $\hat{\mathcal{C}}(\theta) \gets \frac{1}{N}\sum_{i=1}^N \int_0^T|u_\theta(t,X_t^{(i)})|^2dt$
+      \Comment{empirical energy}
+      \State $\hat{\gamma}_{M,N}^2 \gets$ \eqref{eq:3.4} using $\{X_T^{(i)}\}_{i=1}^N$, $\{Y_j\}$, $\{Z_r\}$
+      \Comment{terminal MMD$^2$ penalty}
+      \If{$c>0$}
+        \State $\hat{\mathcal{R}}_{\mathrm{tot}}(\theta) \gets \sum_{k=1}^{q}\hat{\mathcal{R}}_{M,N}[\hat\nu^N_{t_k}]\,(t_k - t_{k-1})$
+        \Comment{time-integrated empirical interaction via \eqref{eq:3.5}}
+      \Else
+        \State $\hat{\mathcal{R}}_{\mathrm{tot}}(\theta) \gets 0$
+      \EndIf
+      \State $F(\theta) \gets \frac{1}{\lambda}\hat{\mathcal{C}}(\theta) + \frac{c}{\lambda}\hat{\mathcal{R}}_{\mathrm{tot}}(\theta) + \hat{\gamma}_{M,N}^2$
+      \Comment{equivalent up to scaling to $\hat{\mathcal{C}}+c\hat{\mathcal{R}}_{\mathrm{tot}}+\lambda\hat{\gamma}_{M,N}^2$}
+      \State Take gradient step on $\nabla_\theta F(\theta)$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\begin{rem}\label{rem:3.interaction}
+The interaction estimator \eqref{eq:3.5} is computed on a \emph{single} batch of $N$ controlled-path samples,
+in contrast to the terminal estimator \eqref{eq:3.4} which requires both controlled-path and target samples.
+In Algorithm~\ref{alg:sbp}, the same batch $\{X^{(i)}\}_{i=1}^N$
+is used to evaluate $\hat{\mathcal{R}}_{M,N}[\hat\nu^N_{t_k}]$ at each time step $t_k$ along the trajectory
+and to evaluate $\hat\gamma_{M,N}^2(\hat\nu^N_T,\mu_T)$ at the terminal time;
+the target samples $\{Y_j\}_{j=1}^N$ from $\mu_T$ and the two independent collections of random frequencies
+$\{Z_r\}$ for $K$ and $\{\tilde Z_r\}$ for $W$ enter only through the terminal and interaction penalties, respectively.
+\end{rem}
+
+\begin{rem}\label{rem:3.3}
+At each iteration, the random frequencies $Z_1,\ldots,Z_M$, the path noise driving the $N$ Euler--Maruyama trajectories,
+and the target samples $Y_1,\ldots,Y_N$ are drawn independently and afresh.
+This ``re-sampling'' strategy ensures that, conditional on the current parameter $\theta$,
+the stochastic gradient of $F(\theta)$ is an unbiased estimator of the population gradient
+(by Theorem~\ref{thm:rfu_unbiased}(i)),
+and it provides the sample-independence used in the convergence analysis above
+(see hypothesis (H2) of Proposition~\ref{prop:rate}).
+The $U$-statistic structure of $\hat{\gamma}_{M,N}^2$ does not require splitting the $N$ paths into sub-batches:
+the diagonal-removing decomposition \eqref{eq:3.2}--\eqref{eq:3.3} already eliminates the biasing self-terms,
+so all $N$ paths participate jointly as the $X$-sample of the estimator.
+\end{rem}
+
+\begin{rem}\label{rem:3.4}
+The same estimator applies to the Monge optimal transport problem studied in \cite{sai-nak:2025},
+as well as to its multi-marginal extension in \cite{nak-sai:2026}.
+In the Monge setting, the SDE is replaced by a deterministic transport map $T_\theta$,
+and the objective becomes $\frac{1}{\lambda N}\sum_i c(X_i,T_\theta(X_i)) + \hat{\gamma}_{M,N}^2$
+with $\hat{\gamma}_{M,N}^2$ computed from $\{T_\theta(X_i)\}$ and target samples $\{Y_j\}$.
+\end{rem}
+
+
+%%%------------------------------------------------------------------------
+\section{Numerical experiments}\label{sec:5}
+%%%------------------------------------------------------------------------
+
+All numerical experiments are implemented in PyTorch.
+The full source code, together with scripts that reproduce every figure and table of this section,
+is available at \url{https://github.com/yumiharu-nakano/kernelMFG-RFU}.
+The Gaussian kernel $K(x,y)=e^{-\alpha|x-y|^2}$ is used throughout for the terminal MMD penalty,
+and the congestion kernel $W(x,y)=e^{-\alpha_W|x-y|^2}$ (same family) for the running interaction cost
+in the EV experiments of Section~\ref{sec:5ev}.
+The bandwidth $\alpha$ is specified in each subsection;
+for the high-dimensional Schr{\"o}dinger-bridge experiments we adopt the standard scaling $\alpha=1/d$,
+while for the low-dimensional ($d=2$) estimator-property and bimodal experiments we use $\alpha=1$.
+
+We organize the experiments as follows.
+Sections~\ref{sec:est_prop}--\ref{sec:5.5comp} treat the Schr{\"o}dinger-bridge specialization
+($c=0$ in the potential MFG \eqref{eq:4.1mfg}, Corollary~\ref{cor:sbp_special_case})
+as a controlled warm-up of the framework that
+verifies the estimator and convergence theorems
+and demonstrates the $O(NM)$ computational scaling.
+Section~\ref{sec:5ev} then presents the EV charging fleet potential MFG ($c>0$),
+the main MFG application of the paper.
+
+
+%%
+\subsection{Estimator properties}\label{sec:est_prop}
+
+We first verify the two key properties of the proposed RF $U$-statistic estimator
+established in Theorem~\ref{thm:rfu_unbiased}: unbiasedness and the variance bound
+$\mathrm{Var}(\hat{\gamma}_{M,N}^2) = O(1/M)+O(1/N)$.
+
+\subsubsection{Bias comparison}\label{sec:5.1}
+
+Before presenting the SBP experiments, we verify the unbiasedness of the proposed estimator.
+We compare three estimators of $\gamma_K(\mu,\nu)^2$:
+(i) the kernel $U$-statistic \eqref{eq:empirical_mmd} with $O(N^2)$ complexity,
+(ii) the standard RFF $V$-statistic (Rahimi--Recht \cite{rah-rec:2007}) with $O(NM)$ complexity, and
+(iii) the proposed RF $U$-statistic \eqref{eq:3.4} with $O(NM)$ complexity.
+For $d=2$, $N=200$, $M=200$, and $\alpha=1$,
+we compute each estimator $2000$ times with $\mu=\nu=\mathcal{N}(0,I_2)$ so that $\gamma_K^2=0$.
+
+\begin{table}[htbp]
+\centering
+\caption{Bias comparison with $\mu=\nu=\mathcal{N}(0,I_2)$ (true $\gamma_K^2=0$), $2000$ trials.}
+\label{tab:bias_same}
+\begin{tabular}{lcc}
+\toprule
+Estimator & Mean & Std \\
+\midrule
+Kernel $U$-stat \eqref{eq:empirical_mmd} & $-3\times 10^{-5}$ & $3.3\times 10^{-3}$ \\
+RFF $V$-stat (Rahimi--Recht) & $+8.0\times 10^{-3}$ & $3.3\times 10^{-3}$ \\
+RF $U$-stat (proposed) \eqref{eq:3.4} & $-2\times 10^{-5}$ & $3.3\times 10^{-3}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The kernel $U$-statistic and the proposed RF $U$-statistic both have sample means close to zero,
+confirming their unbiasedness.
+In contrast, the RFF $V$-statistic exhibits a positive bias of approximately $+8.0\times 10^{-3}$,
+consistent with the $O(\Phi(0)/N)=O(1/200)$ prediction of Remark \ref{rem:3.2}.
+At the population level this bias produces a non-vanishing penalty floor even when $\mathcal{L}(X_1)=\mu_1$ exactly,
+which complicates the limit-theorem analysis as $\lambda\to\infty$
+(cf.\ Remark~\ref{rem:3.2}).
+Whether this distortion affects the trained drift in practice is examined separately in Section~\ref{sec:5.1.3vs};
+the empirical answer there is that, near the SBP optimum,
+the biased $V$-statistic and the unbiased $U$-statistic yield indistinguishable trained drifts.
+
+
+\subsubsection{Variance scaling}\label{sec:5.1var}
+
+We numerically verify the variance decomposition of Theorem~\ref{thm:rfu_unbiased}(iii),
+namely $\mathrm{Var}(\hat{\gamma}_{M,N}^2)=O(1/M)+O(1/N)$,
+where the $O(1/M)$ term arises from the random Fourier averaging
+and the $O(1/N)$ term is the irreducible kernel $U$-statistic variance
+identified in the decomposition \eqref{eq:6.tower}.
+
+We take $\mu=\mathcal{N}(0,I_d)$ and $\nu=\mathcal{N}(m,I_d)$
+with $m=(1,0,\ldots,0)^{\mathsf{T}}\in\RR^{10}$ (so the alternative case $\gamma_K^2>0$),
+$d=10$, and $\alpha=1/d$.
+For each $(M,N)$ in the grid $M\in\{50,100,200,500,1000,2000,5000\}$, $N\in\{50,100,200,500,1000\}$,
+we compute the estimator $\hat{\gamma}_{M,N}^2$ over $T=2000$ independent trials
+and report the sample variance.
+
+\begin{table}[htbp]
+\centering
+\caption{Sample variance of $\hat{\gamma}_{M,N}^2$ ($\times 10^{-4}$) on a grid of $(M,N)$.
+$d=10$, $\alpha=1/d$, $\mu=\mathcal{N}(0,I)$, $\nu=\mathcal{N}(m,I)$ with $m_1=1$,
+over $2000$ trials per cell.
+The sample mean is constant at $0.0256\pm 0.0003$ across all cells (true $\gamma_K^2\approx 0.0256$),
+confirming unbiasedness.}
+\label{tab:variance_scaling}
+\begin{tabular}{c|ccccc}
+\toprule
+$M\backslash N$ & $50$ & $100$ & $200$ & $500$ & $1000$ \\
+\midrule
+$50$   & $2.21$ & $1.20$ & $0.69$ & $0.38$ & $0.29$ \\
+$100$  & $1.88$ & $0.89$ & $0.48$ & $0.24$ & $0.19$ \\
+$200$  & $1.67$ & $0.73$ & $0.40$ & $0.19$ & $0.12$ \\
+$500$  & $1.48$ & $0.67$ & $0.34$ & $0.14$ & $0.08$ \\
+$1000$ & $1.53$ & $0.69$ & $0.32$ & $0.13$ & $0.07$ \\
+$2000$ & $1.55$ & $0.66$ & $0.31$ & $0.13$ & $0.07$ \\
+$5000$ & $1.49$ & $0.64$ & $0.32$ & $0.12$ & $0.06$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A non-negative least-squares fit of the model $\mathrm{Var}=c_1/M + c_2/N$
+to the $35$ cells of Table~\ref{tab:variance_scaling} yields
+\[
+ \mathrm{Var}(\hat{\gamma}_{M,N}^2) \approx \frac{0.0017}{M} + \frac{0.0077}{N},
+\]
+with both coefficients positive and the model explaining the data uniformly across the grid.
+Two qualitative checks support the predicted scaling:
+(i) at the largest $M=5000$ (so the random-feature contribution $c_1/M$ is negligible),
+linear regression of $\log\mathrm{Var}$ on $\log(1/N)$ gives slope $1.06$ (theoretical: $1$);
+(ii) at the largest $N=1000$, the variance plateaus near $c_2/N=7.7\times 10^{-6}$ as $M$ grows,
+matching the floor predicted by the kernel $U$-statistic component.
+
+The decomposition is also visible in Table~\ref{tab:variance_scaling}:
+each row stabilizes at the irreducible $O(1/N)$ floor as $M\to\infty$,
+in agreement with $\hat{\gamma}_{M,N}^2\to\bar{\gamma}_K^2(D)$ from \eqref{eq:6.tower}.
+The sample mean across all $7\times 5\times 2000=7\times 10^4$ trials is $0.0256$
+with cell-to-cell standard deviation below $3\times 10^{-4}$,
+providing additional confirmation of the unbiasedness in the alternative case.
+
+
+\subsubsection{Interaction estimator: bias and variance}\label{sec:5.1.4interaction}
+
+We now verify Theorem~\ref{thm:rfu_interaction}, the analogous properties for the
+\emph{interaction} estimator $\hat{\mathcal{R}}_{M,N}[\hat\nu^N]$ of \eqref{eq:3.5}.
+We take $\nu=\mathcal{N}(0, I_d)$ in dimension $d=2$ with the Gaussian congestion kernel
+$W(x,y)=\exp(-\alpha|x-y|^2)$ at $\alpha=1.0$,
+for which $\mathcal{R}[\nu]=\frac{1}{2}(1+4\alpha)^{-d/2}$ has the closed form $0.1$.
+This provides an analytic target against which the empirical estimator is compared,
+in parallel with Sections~\ref{sec:5.1}--\ref{sec:5.1var} for the terminal MMD${}^2$ estimator.
+
+\paragraph{Bias check.}
+With $N=200$ samples and $M=500$ random frequencies,
+averaged over $2{,}000$ independent trials,
+the proposed unbiased estimator $\hat{\mathcal{R}}_{M,N}$ gives mean $0.10027\pm 1.9\times 10^{-4}$
+(standard error of the mean across trials),
+matching the analytic value $0.1$ within Monte Carlo precision (bias $+2.7\times 10^{-4}$,
+within the standard error).
+For comparison, the corresponding $V$-statistic estimator
+\[
+ \hat{V}_{M,N}^{\mathcal{R}}[\hat\nu^N]
+ := \frac{\Psi(0)}{2MN^2}\sum_{r=1}^M\bigl(S_c^X(\tilde Z_r)^2+S_s^X(\tilde Z_r)^2\bigr)
+\]
+gives mean $0.10179\pm 1.9\times 10^{-4}$
+with bias $+1.8\times 10^{-3}$, very close to the theoretical prediction
+$\frac{\Psi(0)}{2N}=\frac{1}{400}=2.5\times 10^{-3}$ for the Gaussian kernel.
+This directly verifies Theorem~\ref{thm:rfu_interaction} (i) and the parallel of Remark~\ref{rem:3.2}
+for the interaction estimator.
+
+\paragraph{Variance decomposition.}
+On a grid of $5$ sample sizes $N\in\{50, 100, 200, 500, 1000\}$
+and $6$ random-feature counts $M\in\{20, 50, 100, 500, 10^3, 5\!\cdot\!10^3\}$,
+each cell averaged over $500$ trials,
+we compute the empirical variance $\mathrm{Var}(\hat{\mathcal{R}}_{M,N})$
+and fit the two-parameter model $\mathrm{Var}\approx c_1/M + c_2/N$
+by non-negative least squares.
+The best fit is
+\[
+ \mathrm{Var}(\hat{\mathcal{R}}_{M,N}) \;\approx\; \frac{0.0177}{M} + \frac{0.0085}{N},
+\]
+with both coefficients positive and the model explaining $R^2=0.9963$ of the variation
+across the $30$-cell grid.
+This confirms the variance decomposition $O(1/M)+O(1/N)$ of Theorem~\ref{thm:rfu_interaction} (iii),
+in the same form (and with comparable coefficient magnitudes) as the terminal MMD${}^2$ estimator
+of Theorem~\ref{thm:rfu_unbiased}(iii) reported in Section~\ref{sec:5.1var}.
+The parallel structure of the two estimators is therefore reflected at the empirical level
+as well as at the analytic level,
+justifying the use of the same $(M,N)$-coupling in the convergence analysis of Section~\ref{sec:4.2conv}
+for both the terminal MMD penalty and the kernel congestion cost.
+
+
+\subsubsection{Effect of the penalty bias on SBP training}\label{sec:5.1.3vs}
+
+The microbenchmarks above quantify the bias and variance of the estimator in isolation.
+We now examine how the bias affects the practical Schr{\"o}dinger bridge training,
+where the estimator is used inside an SGD loop with $\lambda\gg 1$ over thousands of iterations.
+We compare the proposed unbiased RF $U$-statistic $\hat{\gamma}_{M,N}^2$
+with the standard biased RFF $V$-statistic
+$\hat{V}_{M,N}^2:= \Phi(0)|\frac{1}{N}\sum_i \phi(X_i)-\frac{1}{N}\sum_j\phi(Y_j)|^2$
+of Rahimi--Recht~\cite{rah-rec:2007}.
+We test two target families and several $(N,\lambda)$ regimes,
+keeping all other hyperparameters at the values of Section~\ref{sec:5.2}--\ref{sec:5.3}.
+Evaluation MMD${}^2$ is computed by the unbiased kernel $U$-statistic in all cases
+so that the comparison is fair.
+
+\paragraph{Unimodal target (Gaussian shift, $d=10$).}
+We sweep $(N,\lambda^{-1})\in\{8,20,80\}\times\{10^{-3},10^{-5}\}$ and report mean $\pm$ standard deviation over $5$ seeds.
+Table~\ref{tab:vstat_penalty} shows that the $V$-statistic penalty produces a trained drift
+\emph{statistically indistinguishable} from the $U$-statistic penalty,
+with differences well within the seed standard deviation across all six configurations.
+The empirical $V$-statistic floor $\hat{V}(\mu_1,\mu_1)$
+tracks the theoretical prediction $2\Phi(0)/N$ ($0.025$ at $N=80$, $0.10$ at $N=20$, $0.25$ at $N=8$),
+confirming that the bias is present at the predicted magnitude
+but does not propagate into the optimization output.
+
+\begin{table}[htbp]
+\centering
+\caption{Effect of the penalty bias on SBP training, unimodal Gaussian shift ($d=10$, $5$ seeds).
+The trained drift is statistically indistinguishable between the two penalties across all $(N,\lambda)$ configurations,
+even though the $V$-stat floor $\hat{V}(\mu_1,\mu_1)$ scales as $2\Phi(0)/N$ and reaches $0.25$ at $N=8$.}
+\label{tab:vstat_penalty}
+\begin{small}
+\begin{tabular}{cccccc}
+\toprule
+$N$ & $\lambda^{-1}$ & Penalty & $\EE[X_1]_1$ & $|\EE[X_1]-m|^2$ & $\hat{V}(\mu_1,\mu_1)$ \\
+\midrule
+$80$ & $10^{-3}$ & $U$-stat & $2.72\pm 0.14$ & $0.15\pm 0.07$ & $(2.0\pm 0.3)\times 10^{-2}$ \\
+$80$ & $10^{-3}$ & $V$-stat & $2.73\pm 0.14$ & $0.14\pm 0.07$ & $(2.0\pm 0.3)\times 10^{-2}$ \\
+$80$ & $10^{-5}$ & $U$-stat & $2.93\pm 0.14$ & $0.07\pm 0.02$ & $(2.0\pm 0.3)\times 10^{-2}$ \\
+$80$ & $10^{-5}$ & $V$-stat & $2.93\pm 0.14$ & $0.07\pm 0.01$ & $(2.0\pm 0.3)\times 10^{-2}$ \\
+$20$ & $10^{-3}$ & $U$-stat & $2.75\pm 0.11$ & $0.14\pm 0.04$ & $(8.5\pm 0.6)\times 10^{-2}$ \\
+$20$ & $10^{-3}$ & $V$-stat & $2.80\pm 0.13$ & $0.12\pm 0.03$ & $(8.5\pm 0.6)\times 10^{-2}$ \\
+$\phantom{0}8$  & $10^{-3}$ & $U$-stat & $2.49\pm 0.11$ & $0.45\pm 0.11$ & $(2.1\pm 0.2)\times 10^{-1}$ \\
+$\phantom{0}8$  & $10^{-3}$ & $V$-stat & $2.64\pm 0.07$ & $0.29\pm 0.09$ & $(2.1\pm 0.2)\times 10^{-1}$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{table}
+
+\paragraph{Interpretation.}
+The same comparison repeated on the bimodal target of Section~\ref{sec:5.2}
+($N=64$, $\lambda^{-1}=10^{-2}$, $30$ seeds) is again statistically indistinguishable
+($p=0.35$ in a one-sided Fisher exact test of mode-imbalance failure rates),
+so the two penalties produce empirically indistinguishable trained drifts
+across batch sizes $N\in[8,80]$ and penalty parameters $\lambda^{-1}\in[10^{-5},10^{-2}]$.
+The reason is that the bias is approximately
+$(1/N)\bigl[2\Phi(0)-\iint K(x,x')\nu_\theta(dx)\nu_\theta(dx')-\iint K(y,y')\mu_1(dy)\mu_1(dy')\bigr]$. 
+Near the SBP optimum $\nu_\theta\approx\mu_1$ the two self-kernel expectations balance,
+so the bias is approximately constant in $\theta$ and contributes only a small additional gradient.
+We nevertheless adopt the unbiased $U$-statistic in the remainder of the paper for theoretical reasons. 
+It eliminates the population-level penalty floor of order $\Phi(0)/N$,
+removes the need for a bias-correction term in the convergence analysis,
+and yields the variance decomposition $O(1/M)+O(1/N)$ of Theorem~\ref{thm:rfu_unbiased}(iii).
+
+
+%%
+\subsection{Bimodal target ($d=2$)}\label{sec:5.2}
+
+We solve the SBP with $\mu_0=\delta_0$ and a bimodal target
+$\mu_1 = \frac{1}{2}\mathcal{N}((2,2)^{\mathsf{T}}, \frac{1}{4} I_2)
+        + \frac{1}{2}\mathcal{N}((-2,-2)^{\mathsf{T}}, \frac{1}{4} I_2)$
+in dimension $d=2$, with $\sigma=0.5$.
+The drift $u_\theta(t,x)$ is parametrized by a network with hidden dimensions $(64,32)$ and LayerNorm.
+We compare the proposed RF $U$-statistic ($M=200$) with the kernel estimator \eqref{eq:empirical_mmd},
+using $N=64$, $\lambda^{-1}=0.01$, and $\alpha=1.0$ for $2000$ epochs under the same random seed.
+
+Both methods successfully learn the bimodal structure of $\mu_1$.
+The terminal distributions $X_1^{(\theta)}$ split into the two modes in both cases.
+Averaged over $5$ independent runs, the RF $U$-statistic achieves a terminal MMD${}^2$ of
+$(1.4\pm 1.0)\times 10^{-2}$, comparable to the kernel estimator's MMD${}^2 \approx 1.1\times 10^{-2}$,
+confirming that the RF approximation does not degrade accuracy in the bimodal setting.
+The training times are similar at $N=64$ ($10.6$s vs $10.9$s),
+as the SDE integration dominates the per-iteration cost for small batch sizes.
+However, the computational advantage of the RF method grows with $N$
+(see Section \ref{sec:5.5comp}).
+
+
+%%
+\subsection{High-dimensional Gaussian shift}\label{sec:5.3}
+
+We test the method in higher dimensions with $\mu_0=\delta_0$ and
+$\mu_1=\mathcal{N}(m, I_d)$ where $m=(3,0,\ldots,0)^{\mathsf{T}}\in\RR^d$, for $d=10, 50, 100$.
+The Schr{\"o}dinger bridge should steer the diffusion from the origin to a Gaussian centered at $m$.
+
+The drift network uses LayerNorm and hidden dimensions that scale with $d$. 
+The hyperparameters are summarized in Table \ref{tab:sbp_config}.
+The SDE is integrated via the Euler--Maruyama scheme with $20$ time steps.
+
+\begin{table}[htbp]
+\centering
+\caption{Hyperparameters for the high-dimensional SBP experiments.}
+\label{tab:sbp_config}
+\begin{tabular}{ccccccc}
+\toprule
+$d$ & $M$ & $N$ & Epochs & Hidden dims & $\alpha$ & $\lambda^{-1}$ \\
+\midrule
+$10$  & $400$  & $80$ & $4000$ & $(128,64)$ & $0.1$  & $0.001$ \\
+$50$  & $800$  & $80$ & $5000$ & $(256,128)$ & $0.02$ & $5\times 10^{-4}$ \\
+$100$ & $1500$ & $80$ & $6000$ & $(512,256)$ & $0.01$ & $3\times 10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Results for the high-dimensional SBP (Gaussian shift, target mean $m_1=3.0$).
+Values are mean $\pm$ standard deviation over $5$ independent runs with different random seeds, for each $d$.}
+\label{tab:sbp_result}
+\begin{tabular}{ccccc}
+\toprule
+$d$ & $\EE[X_1]_1$ & $\frac{1}{d-1}\sum_{k=2}^{d}\EE[X_1]_k$ & Std (mean) & MMD${}^2$ \\
+\midrule
+$10$  & $2.69\pm 0.07$ & $\phantom{-}0.002\pm 0.025$ & $0.98\pm 0.00$ & $(1.4\pm 0.2)\times 10^{-3}$ \\
+$50$  & $2.64\pm 0.07$ & $\phantom{-}0.002\pm 0.007$ & $0.96\pm 0.00$ & $(2.1\pm 0.2)\times 10^{-3}$ \\
+$100$ & $2.71\pm 0.05$ & $-0.001\pm 0.002$ & $0.95\pm 0.00$ & $(2.0\pm 0.3)\times 10^{-3}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The results are shown in Table \ref{tab:sbp_result}.
+In all dimensions, the first coordinate $\EE[X_1]_1$ approaches the target $3.0$,
+the remaining coordinates stay near zero,
+and the standard deviation is close to the target value of $1.0$.
+The MMD${}^2$ decreases to the order of $10^{-3}$, confirming the distributional constraint is approximately satisfied.
+The standard deviations across seeds are small (between $0.05$ and $0.07$ for $\EE[X_1]_1$ in all three dimensions),
+indicating that the method is stable and the reported performance is not seed-specific.
+The accuracy is remarkably consistent across dimensions, with $\EE[X_1]_1$ in the range $2.64$--$2.71$ across $d=10, 50, 100$.
+
+The residual gap between $\EE[X_1]_1$ and the target $3.0$ has two sources.
+First, with finite penalty weight $\lambda$ the optimal penalised solution does not exactly match $\mu_1$,
+a gap that shrinks as $\lambda^{-1}\to 0$ (verified in Section~\ref{sec:5.4lam}).
+Second, the bandwidth scaling $\alpha=1/d$ keeps the cosine argument
+$\mathrm{Var}(Z^{\mathsf{T}}X\mid X)=2\alpha|X|^2$ at $O(1)$ for high-dimensional targets with $\EE|X|^2=O(d)$,
+which is necessary for the RF features to remain informative and for the
+$O(1/M)+O(1/N)$ variance bound of Theorem~\ref{thm:rfu_unbiased}(iii) to be free of hidden $d$-dependent constants. 
+The price is a flatter kernel that reduces MMD discriminative power,
+so the same MMD${}^2$ value corresponds to a larger distributional discrepancy in higher dimensions.
+The residual gap $\EE[X_1]_1\approx 2.7$ in Table~\ref{tab:sbp_result}
+is dominated by the finite $\lambda$ rather than by $\alpha=1/d$. 
+At $\lambda^{-1}=10^{-4}$ the same $d=100$ configuration reaches $\EE[X_1]_1=2.91$
+(Section~\ref{sec:conv_ver}), closing $96\%$ of the gap.
+Overall, the experiments demonstrate that the proposed method enables Schr{\"o}dinger bridge computation
+in dimensions well beyond the $d\le 2$ range of the $O(N^2)$ kernel method in \cite{nak:2024sb}.
+
+
+%%
+\subsection{Convergence verification}\label{sec:conv_ver}
+
+The high-dimensional experiments of Section~\ref{sec:5.3} exhibit a residual gap
+between $\EE[X_1]_1$ and the target $3.0$.
+We now diagnose this gap experimentally by sweeping the two parameters
+that control the approximation: the penalty weight $\lambda$ (Theorem~\ref{thm:convergence})
+and the number of random Fourier features $M$ (Corollary~\ref{cor:kernel_convergence}).
+
+\subsubsection{Penalty parameter sweep}\label{sec:5.4lam}
+
+We numerically verify the convergence statement of Theorem~\ref{thm:convergence} (i),
+\[
+ \lim_{n\to\infty}\sqrt{\lambda_n}\,\gamma_K(\mathcal{L}(X_1^{(n)}),\mu_1) = 0,
+\]
+by sweeping the penalty parameter for the Gaussian shift target
+($\mu_1=\mathcal{N}(m,I_d)$ with $m=(3,0,\ldots,0)^{\mathsf{T}}$) at $d=10$ and $d=50$.
+All other settings (network architecture, bandwidth, $M$, $N$, $20$ Euler--Maruyama steps, training epochs)
+are kept identical to those of Section~\ref{sec:5.3}.
+We vary $\lambda^{-1}\in\{10^{-2}, 3\times 10^{-3}, 10^{-3}, 3\times 10^{-4}, 10^{-4}\}$
+and report mean and standard deviation over $3$ random seeds.
+
+\begin{table}[htbp]
+\centering
+\caption{$\lambda$-sweep for the $d=10$ Gaussian shift SBP
+($\mu_1=\mathcal{N}(m, I_{10})$, $m_1=3.0$).
+Mean $\pm$ standard deviation over $3$ seeds, $5000$ epochs each.
+The control cost denotes the empirical estimate of $\EE\bigl[\int_0^1|u|^2 dt\bigr]$ at the end of training.}
+\label{tab:lambda_sweep}
+\begin{tabular}{ccccc}
+\toprule
+$\lambda^{-1}$ & $\EE[X_1]_1$ & MMD${}^2$ & $|\EE[X_1]-m|^2$ & Control cost \\
+\midrule
+$10^{-2}$            & $1.78\pm 0.05$ & $(2.4\pm 0.2)\times 10^{-2}$ & $1.51\pm 0.12$ & $7.4\pm 0.3$ \\
+$3\times 10^{-3}$    & $2.28\pm 0.05$ & $(5.2\pm 1.2)\times 10^{-3}$ & $0.54\pm 0.08$ & $10.1\pm 0.3$ \\
+$10^{-3}$            & $2.58\pm 0.06$ & $(2.0\pm 0.7)\times 10^{-3}$ & $0.21\pm 0.05$ & $11.6\pm 0.4$ \\
+$3\times 10^{-4}$    & $2.76\pm 0.06$ & $(1.1\pm 0.3)\times 10^{-3}$ & $0.087\pm 0.028$ & $13.0\pm 0.7$ \\
+$10^{-4}$            & $2.81\pm 0.06$ & $(0.8\pm 0.2)\times 10^{-3}$ & $0.061\pm 0.020$ & $13.8\pm 0.9$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The results in Table~\ref{tab:lambda_sweep} confirm the predicted convergence behaviour.
+As $\lambda^{-1}$ decreases (i.e., $\lambda$ increases) by two orders of magnitude,
+the terminal MMD${}^2$ decreases by approximately $30$-fold,
+the squared mean error $|\EE[X_1]-m|^2$ decreases by approximately $25$-fold,
+and the first-coordinate mean $\EE[X_1]_1$ approaches the target value $3.0$ from below.
+Computing $\sqrt{\lambda}\,\gamma_K\le \sqrt{\lambda\cdot\mathrm{MMD}^2}$ from the table gives
+$1.51$ at $\lambda^{-1}=10^{-2}$ and $0.087$ at $\lambda^{-1}=10^{-4}$,
+a $17$-fold reduction consistent with $\sqrt{\lambda}\gamma_K\to 0$ as stated in Theorem~\ref{thm:convergence} (i).
+The control cost simultaneously increases monotonically from $7.4$ to $13.8$,
+exhibiting the expected fidelity--cost trade-off:
+stronger enforcement of the terminal constraint requires a more aggressive control.
+
+The residual gap of $\EE[X_1]_1 \approx 2.81$ to the target $3.0$ at $\lambda^{-1}=10^{-4}$
+is no longer dominant, and could in principle be eliminated by further decreasing $\lambda^{-1}$ at the cost of additional iterations.
+This experiment thus identifies the finite penalty weight as the principal source of the residual gap
+discussed in Section~\ref{sec:5.3}.
+
+To confirm that the same diagnosis applies in higher dimensions and that the residual gap
+$\EE[X_1]_1\approx 2.7$ observed in Table~\ref{tab:sbp_result} for $d\ge 10$ is not a structural
+limitation of the $\alpha=1/d$ scaling, we repeat the sweep at $d=100$
+with the corresponding hyperparameters of Table~\ref{tab:sbp_config}
+($\alpha=0.01$, $M=1500$, $N=80$, $6000$ epochs);
+the analogous sweep at the intermediate $d=50$ is qualitatively identical
+and is omitted to save space.
+
+\begin{table}[htbp]
+\centering
+\caption{$\lambda$-sweep for the $d=100$ Gaussian shift SBP
+($\mu_1=\mathcal{N}(m, I_{100})$, $m_1=3.0$).
+Mean $\pm$ standard deviation over $3$ seeds, $6000$ epochs each, $\alpha=0.01$, $M=1500$.}
+\label{tab:lambda_sweep_d100}
+\begin{tabular}{ccccc}
+\toprule
+$\lambda^{-1}$ & $\EE[X_1]_1$ & MMD${}^2$ & $|\EE[X_1]-m|^2$ & Control cost \\
+\midrule
+$10^{-2}$            & $0.96\pm 0.02$ & $(1.1\pm 0.0)\times 10^{-1}$ & $4.223\pm 0.099$ & $\phantom{0}4.4\pm 0.5$ \\
+$3\times 10^{-3}$    & $1.72\pm 0.03$ & $(3.6\pm 0.1)\times 10^{-2}$ & $1.774\pm 0.089$ & $16.6\pm 1.4$ \\
+$10^{-3}$            & $2.28\pm 0.01$ & $(9.0\pm 0.4)\times 10^{-3}$ & $0.740\pm 0.014$ & $30.8\pm 2.0$ \\
+$3\times 10^{-4}$    & $2.72\pm 0.06$ & $(2.0\pm 0.1)\times 10^{-3}$ & $0.321\pm 0.029$ & $43.3\pm 3.6$ \\
+$10^{-4}$            & $2.91\pm 0.01$ & $(1.3\pm 0.1)\times 10^{-3}$ & $0.263\pm 0.034$ & $51.8\pm 4.5$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:lambda_sweep_d100} shows that the trend in $d=100$ is identical to and, if anything, more favourable than in $d=10$. 
+$\EE[X_1]_1$ progresses from $0.96\pm 0.02$ at $\lambda^{-1}=10^{-2}$
+to $2.91\pm 0.01$ at $\lambda^{-1}=10^{-4}$,
+closing approximately $96\%$ of the gap to the target $3.0$.
+The best value of $\EE[X_1]_1$ at $\lambda^{-1}=10^{-4}$ thus lies in the narrow range $2.81$ (at $d=10$) to $2.91$ (at $d=100$),
+demonstrating that the residual gap of $\EE[X_1]_1\approx 2.7$
+reported at the working $\lambda^{-1}$ values of Table~\ref{tab:sbp_result}
+is driven by the choice of $\lambda$ rather than by a degradation of the method with dimension.
+The price of pushing $\lambda$ further is a roughly proportional increase in the control cost
+(at $d=100$: from $4.4$ to $51.8$, a $12$-fold increase)
+and in the number of optimization iterations needed for convergence,
+consistent with the trade-off quantified in the explicit a.s.\ rate \eqref{eq:4.rate} of Proposition~\ref{prop:rate}.
+
+
+\subsubsection{Kernel $U$-statistic limit ($M\to\infty$)}\label{sec:5.4ker}
+
+We numerically verify Corollary~\ref{cor:kernel_convergence}, which states that
+the random Fourier $U$-statistic penalty converges to the kernel $U$-statistic penalty $\bar{\gamma}_K^2(D)$ as $M\to\infty$,
+and that both yield the same limiting Schr{\"o}dinger bridge.
+Using the $d=10$ Gaussian shift setting of Section~\ref{sec:5.3} as a controlled benchmark
+($N=80$, $\lambda^{-1}=10^{-3}$, $5000$ epochs, $5$ seeds, all other hyperparameters unchanged),
+we compare four penalty estimators: the kernel $U$-statistic $\bar{\gamma}_K^2(D)$
+of complexity $O(N^2)$, and the RF $U$-statistic $\hat{\gamma}_{M,N}^2$ for $M\in\{100,400,1600\}$.
+Evaluation is performed by the kernel $U$-statistic in all cases for fair comparison.
+
+\begin{table}[htbp]
+\centering
+\caption{Kernel $U$-statistic vs RF $U$-statistic penalty in SBP training
+($d=10$ Gaussian shift, $N=80$, $\lambda^{-1}=10^{-3}$, $5000$ epochs, $5$ seeds).
+Evaluation MMD${}^2$ is computed by the kernel $U$-statistic for fair comparison.}
+\label{tab:kernel_vs_rf}
+\begin{tabular}{lcccc}
+\toprule
+Method & $\EE[X_1]_1$ & $|\EE[X_1]-m|^2$ & MMD${}^2$ (eval) & Std (mean) \\
+\midrule
+Kernel $U$-stat       & $2.69\pm 0.08$ & $0.13\pm 0.04$ & $(1.40\pm 0.70)\times 10^{-3}$ & $0.98\pm 0.01$ \\
+RF $U$-stat $(M=100)$ & $2.63\pm 0.09$ & $0.18\pm 0.07$ & $(2.11\pm 0.88)\times 10^{-3}$ & $0.98\pm 0.01$ \\
+RF $U$-stat $(M=400)$ & $2.67\pm 0.12$ & $0.16\pm 0.07$ & $(1.98\pm 0.77)\times 10^{-3}$ & $0.98\pm 0.01$ \\
+RF $U$-stat $(M=1600)$& $2.77\pm 0.09$ & $0.10\pm 0.05$ & $(2.07\pm 0.84)\times 10^{-3}$ & $0.97\pm 0.00$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The four methods produce statistically indistinguishable solutions. 
+The first-coordinate means $\EE[X_1]_1$ all fall in $[2.63, 2.77]$, well within the seed-to-seed standard deviation,
+and the standard deviations across the remaining coordinates agree to two decimal places.
+The MMD${}^2$ values for the RF estimators ($M=100, 400, 1600$) cluster around $2\times 10^{-3}$,
+slightly above the kernel $U$-statistic's $1.4\times 10^{-3}$,
+but again within seed variability.
+This empirical equivalence supports Corollary~\ref{cor:kernel_convergence}:
+the RF approximation is a faithful surrogate of the kernel $U$-statistic in the SBP training loop,
+and increasing $M$ does not push the RF method beyond the kernel $U$-statistic baseline.
+
+A complementary cost analysis is given in Section~\ref{sec:5.5comp},
+where we show that for sufficiently large batch size $N$ the kernel $U$-statistic computation
+($O(N^2)$ per iteration, with backpropagation through the full $N\times N$ kernel matrix)
+becomes a memory and compute bottleneck, whereas the RF $U$-statistic remains scalable
+at $O(NM)$ cost.
+For the moderate $N=80$ used here, both estimators have comparable per-iteration cost,
+so the table demonstrates only the equivalence in solution quality. 
+The computational advantage of the RF method emerges in higher dimensions and larger batch sizes.
+
+
+%%
+\subsection{Computational scaling}\label{sec:5.5comp}
+
+We compare the proposed RF $U$-statistic with the kernel estimator \eqref{eq:empirical_mmd}
+in terms of both solution quality and computational cost.
+
+We measure the per-iteration wall-clock time of the MMD computation alone (forward + backward,
+$d=10$, $\alpha=0.1$, $M=500$), which isolates the kernel-evaluation cost from the SDE overhead.
+
+\begin{table}[htbp]
+\centering
+\caption{MMD computation time (forward + backward, in milliseconds; $d=10$, $\alpha=0.1$, $M=500$).
+Solution quality of the two estimators is comparable in the SBP training pipeline
+(verified in Section~\ref{sec:5.4ker} for $d=10$).}
+\label{tab:scalability_mmd}
+\begin{tabular}{cccc}
+\toprule
+$N$ & Kernel $O(N^2)$ & RF $U$-stat $O(NM)$ & Speedup \\
+\midrule
+$100$  & $0.6$  & $0.7$ & $0.8\times$ \\
+$200$  & $0.8$  & $0.6$ & $1.3\times$ \\
+$500$  & $4.7$  & $1.1$ & $4.1\times$ \\
+$1000$ & $19.3$ & $2.0$ & $9.5\times$ \\
+$2000$ & $83.3$ & $3.7$ & $22.3\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The speedup reaches $22\times$ at $N=2000$, confirming the $O(N^2)$ vs $O(NM)$ scaling.
+The kernel method also requires storing the $N\times N$ kernel matrix in the computation graph
+for backpropagation through the SDE trajectory,
+which leads to memory exhaustion for large $N$ on typical hardware;
+the RF $U$-statistic avoids this entirely, with memory footprint $O(NM + Nd)$.
+This memory advantage is essential for high-dimensional MFGs and SBPs
+where both large $N$ (for accurate sampling) and large $d$ are required simultaneously.
+
+
+%%
+\subsection{Potential MFG: EV charging fleet coordination}\label{sec:5ev}
+
+We now turn to the main MFG application of the paper.
+Consider a fleet of electric vehicles that need to charge over an operational horizon $[0,T]$ with $T=1$.
+Each EV is described by a state $X_t=(s_t,h_t)\in\RR\times\RR$ where $s_t\in\RR$ is the state of charge (SOC), i.e, 
+the ratio of current stored energy to the nominal battery capacity, normalized so that
+$s_t=0$ corresponds to a fully discharged battery and $s_t=1$ to a fully charged one. Further, 
+$h_t\in\RR$ is a \emph{physical heterogeneity coordinate}
+representing the log of the per-vehicle charging-speed multiplier,
+i.e,, $\eta(h):=e^h$ scales the actual SOC change rate produced by a unit demand,
+modelling the combined effect of battery capacity, charger maximum power, and conversion efficiency.
+The controlled dynamics are
+\begin{equation}\label{eq:5ev.dyn}
+ ds_t = \eta(h)\,u_\theta(t,X_t)\,dt + \sigma\,dB_t,\qquad dh_t = 0,\qquad
+ s_0\sim \mathcal{N}(0.20,\,0.05^2),\ \ h_0\sim\mathcal{N}(0,\,\sigma_h^2),
+\end{equation}
+with $\sigma=0.05$ and $\sigma_h=0.3$,
+so that $\eta(h)$ is log-normal with mean $1$ and approximate $95\%$ range $[0.55,\,1.8]$.
+The control $u_\theta(t,X_t)\in\RR$ is the EV's demand fraction
+(read by the on-board charger and converted into an actual SOC rate $\eta(h)u_\theta$);
+it is parametrised by a neural network that takes $(t,s,h)$ as input,
+so the drift can differentiate charging schedules across EVs with different physical $\eta(h)$.
+
+Following classical formulations of mean-field-type EV charging coordination
+\cite{cou-per-tem-deb:2012,ma-cal-his:2013,par-gen-lyg:2020},
+we adopt an \emph{aggregate-demand--price} congestion cost.
+Let $u^{\!*}:[0,1]\to[0,1]$ be the SOC-dependent charging-power profile of a Li-ion battery:
+$u^{\!*}$ is approximately maximal in the constant-current range ($20$--$80\%$ SOC, drawing tens of kW per vehicle)
+and tapered in the constant-voltage range ($\gtrsim 80\%$ SOC).
+We use the smooth profile
+\begin{equation}\label{eq:5ev.ustar}
+ u^{\!*}(s) \;=\; \sigma\bigl(\beta(s-s_-)\bigr)\,\sigma\bigl(\beta(s_+-s)\bigr),\qquad
+ \beta = 20,\ s_- = 0.1,\ s_+ = 0.85,
+\end{equation}
+with $\sigma(x):=1/(1+e^{-x})$, which is bounded continuous and captures the CC plateau and CV taper
+($u^{\!*}(s)\approx 1$ for $s\in[0.2,0.8]$, $u^{\!*}(0.85)\approx 0.5$, $u^{\!*}(0.95)\approx 0.18$, $u^{\!*}(s)\to 0$ as $s\to 0$ or $s\to 1$).
+The grid power drawn by vehicle $i$ is then $\eta(h^{(i)})u^{\!*}(s^{(i)}_t)$ (charging-speed multiplier times the SOC-dependent profile),
+and the cost functional is the potential MFG \eqref{eq:4.1mfg} with
+\begin{itemize}
+\item Terminal target $\mu_T=\mathcal{N}(0.85, 0.05^2)$ on the SOC component (deadline distribution).
+\item Terminal kernel $K(s,s')=e^{-\alpha_K(s-s')^2}$ with $\alpha_K=50$ on the SOC coordinate only.
+\item Aggregate-demand congestion
+\begin{equation}\label{eq:5ev.RD}
+ \mathcal{R}^{(D)}[\nu_t]\;=\;D[\nu_t]^2,\qquad
+ D[\nu]\;:=\;\int \eta(h)\,u^{\!*}(s)\,\nu(ds, dh),
+\end{equation}
+representing the squared aggregate charging demand of the fleet at time $t$.
+\item Weights $\lambda=10^3$ and $c\in\{0,10,100\}$ (no-congestion baseline, mild congestion, strong congestion).
+\end{itemize}
+The cost $\mathcal{R}^{(D)}[\nu_t]$ corresponds to a quadratic price function applied to the aggregate fleet demand,
+and equals the interaction integral $\iint \eta(h)u^{\!*}(s)\,\eta(h')u^{\!*}(s')\,\nu_t(ds,dh)\,\nu_t(ds',dh')$
+with the rank-one kernel $(x,x')\mapsto \eta(h)u^{\!*}(s)\cdot\eta(h')u^{\!*}(s')$.
+Two EVs both in the constant-current phase with similar $\eta$ contribute jointly to grid demand
+and produce a synchronized peak load, whereas an EV in the CV phase ($u^{\!*}\to 0$)
+or with very small $\eta$ contributes little and is not aggregated.
+
+\paragraph{Empirical estimator and convergence theory.}
+$\mathcal{R}^{(D)}[\nu]$ falls outside the kernel-MMD framework of Theorem~\ref{thm:rfu_interaction}
+(the rank-one kernel $\eta(h)u^{\!*}(s)\cdot\eta(h')u^{\!*}(s')$ is not translation invariant),
+but the functional $\nu\mapsto D[\nu]^2$ is non-negative and continuous in the weak topology on $\cP(\RR^2)$,
+since $(s,h)\mapsto \eta(h)u^{\!*}(s)$ is bounded continuous (recall $\eta$ is bounded above on the support of $h_0$ for any finite training horizon, and the SDE preserves $h$).
+Writing $g_i:=\eta(h^{(i)})u^{\!*}(s_t^{(i)})$, an unbiased $U$-statistic estimator with $O(N)$ complexity is available:
+\begin{equation}\label{eq:5ev.Rhat}
+ \hat{\mathcal{R}}^{(D)}_{N}[\hat\nu^N_t]
+ \;:=\;\frac{1}{N(N-1)}\sum_{i\neq j}g_i\,g_j
+ \;=\;\frac{(\sum_i g_i)^2-\sum_i g_i^2}{N(N-1)},
+\end{equation}
+which is strongly consistent ($\hat{\mathcal{R}}^{(D)}_{N}[\hat\nu^N]\to \mathcal{R}^{(D)}[\nu]$ a.s.\ as $N\to\infty$)
+by the standard SLLN for $U$-statistics \cite[Section~5.4]{ser:1980}.
+The sample-level almost-sure convergence of the empirical MFG to the constrained value
+therefore follows from Proposition~\ref{prop:convergence_general}
+(no rate condition on a running-cost feature count is required, only $N_n\to\infty$).
+
+\paragraph{State-space idealization.}
+The SOC is physically constrained to $[0,1]$, but the chosen means and variances keep $\mathbb{P}(s_t\notin[0,1])$ below $1.4\times 10^{-3}$;
+we therefore treat the SOC as a real-valued diffusion, leaving a $[0,1]$-truncated and reflecting variant for future work.
+
+Training uses $N=128$ paths per batch, $M=300$ random frequencies for the terminal kernel $K$
+(the aggregate-demand cost \eqref{eq:5ev.Rhat} requires no random features),
+$20$ Euler--Maruyama steps, learning rate $10^{-3}$, and $2000$ epochs.
+We report mean $\pm$ standard deviation over $3$ random seeds.
+
+\begin{table}[htbp]
+\centering
+\caption{EV charging fleet potential MFG with physical heterogeneity ($\eta(h)=e^h$, $\sigma_h=0.3$)
+and aggregate-demand congestion, $\lambda=10^3$, $3$ seeds per configuration.
+``Peak $D$'' is $\max_{t\in(0,T]}\hat D[\hat\nu^N_t]$ on a held-out batch of $n_{\mathrm{eval}}=2000$ paths,
+``Mean $D$'' is the time-averaged $\hat D[\hat\nu^N_t]$ on the same paths,
+and the evaluation MMD${}^2$ on SOC uses the kernel $U$-statistic for fairness.
+``$\|u_n\|_\infty$'' is the empirical $L^\infty$ norm of the trained drift on the evaluation batch,
+verifying the uniform bound used in Proposition~\ref{prop:rate_mfg}.
+$c=0$ is the no-congestion baseline; $c=10,100$ activate the aggregate-demand congestion cost \eqref{eq:5ev.RD}.}
+\label{tab:ev_charging}
+\begin{small}
+\begin{tabular}{ccccccc}
+\toprule
+$c$ & $\EE[s_T]$ & SOC std at $T$ & Eval.\ MMD${}^2$ & Peak $D$ & Mean $D$ & $\|u_n\|_\infty$ \\
+\midrule
+$0$   & $0.844\pm 0.003$ & $0.055$ & $(1.6\pm 1.7)\times 10^{-3}$ & $1.044\pm 0.001$ & $0.946$ & $1.10\pm 0.02$ \\
+$10$  & $0.844\pm 0.002$ & $0.055$ & $(1.6\pm 1.1)\times 10^{-3}$ & $1.044\pm 0.001$ & $0.939$ & $1.10\pm 0.02$ \\
+$100$ & $0.813\pm 0.035$ & $\mathbf{0.236}$ & $(3.8\pm 3.3)\times 10^{-3}$ & $\mathbf{0.887\pm 0.168}$ & $\mathbf{0.431}$ & $2.48\pm 0.20$ \\
+\bottomrule
+\end{tabular}
+\end{small}
+\end{table}
+
+Table~\ref{tab:ev_charging} shows three effects.
+\emph{First,} the framework solves the EV charging MFG:
+$\EE[s_T]\approx 0.844$ at $c=0,10$, with a small downward bias to $0.81$ at $c=100$
+reflecting the congestion-vs-terminal trade-off.
+\emph{Second,} the aggregate-demand congestion cost reduces both peak and time-averaged demand:
+at $c=100$, peak $D$ drops from $1.044$ to $0.887$ ($\approx 15\%$ peak shaving)
+and mean $D$ from $0.946$ to $\mathbf{0.431}$ ($\approx 54\%$ reduction),
+at the price of a moderate increase in evaluation MMD${}^2$
+($1.6\times 10^{-3}\to 3.8\times 10^{-3}$, factor $\approx 2.4$).
+At $c=10$ the congestion weight is too small relative to $\lambda=10^3$ to differ from the $c=0$ baseline;
+the effect emerges only at $c=100$.
+\emph{Third,} this reduction combines two ingredients: the physical heterogeneity $\eta(h)=e^h$
+naturally desynchronises fast ($\eta>1$) and slow ($\eta<1$) chargers, and the drift $u_\theta(t,s,h)$ further staggers them in time.
+The combined effect broadens the terminal SOC distribution at $c=100$
+($\mathrm{std}(s_T):0.055\to\mathbf{0.236}$, factor $4.3$),
+showing that the strong-congestion MFG sacrifices terminal SOC concentration to flatten grid demand.
+
+\paragraph{Empirical verification of the uniform drift bound.}
+The rate analysis of Proposition~\ref{prop:rate_mfg} assumes a uniform $L^\infty$ bound
+on the trained drift sequence $\{u_n\}$.
+The rightmost column of Table~\ref{tab:ev_charging} reports
+$\|u_n\|_\infty:=\max_t\,\|u_n(t,\cdot)\|_{L^\infty}$ measured on the evaluation batch.
+The largest value occurs at the strong-congestion setting $c=100$,
+where the drift must work hardest to spread the population in time.
+The uniform bound is satisfied without any explicit weight clipping or bounded-output activation
+in the present network architecture (hidden dimensions $(64,32)$ with ReLU activations and LayerNorm).
+
+\paragraph{Scope and physical realism.}
+The present demonstration adopts a single physical heterogeneity coordinate $h$
+encoding the log charging-speed multiplier;
+extending to richer physical heterogeneities (battery capacity, plug-out time uncertainty, comfort preference)
+that act jointly through $h$-dependent dynamics and a domain-justified law on $h$
+is a natural problem-driven direction.
+The unbiased $U$-statistic estimator \eqref{eq:5ev.Rhat} keeps the per-iteration
+cost of the congestion evaluation at $O(N)$ and dimension-free in the heterogeneity dimension,
+so such extensions are supported by the framework without algorithmic modification.
+
+
+%%
+\subsection{Positioning against deep-learning MFG / SBP baselines}\label{sec:5.7baselines}
+
+The methodology developed in this paper is one of several deep-learning approaches to high-dimensional MFG and SBP that have appeared in recent years.
+The most directly relevant baselines are
+APAC-Net of Lin et al.~\cite{lin-etal:2021apac}, which alternates between a population network and a control network in a saddle-point formulation;
+the HJB-based machine-learning framework of Ruthotto et al.~\cite{rut-etal:2020}, which parametrises the value function rather than the control;
+the deep MFG/MFC methods surveyed in \cite{car-lau:2022,car-lau:2021};
+and the bridge-matching and diffusion-Schr{\"o}dinger-bridge methods
+\cite{de-etal:2021,var-etal:2021,shi-etal:2023dsbm,Tong2024}, which target the $c=0$ specialization.
+Table~\ref{tab:baseline_comparison} summarises the structural differences relevant to a JSC-style assessment.
+
+\begin{table}[htbp]
+\centering
+\caption{Structural comparison with representative deep-learning MFG and SBP methods.
+``Networks'' counts the neural networks involved in the optimization;
+``Cost class'' indicates the running- and terminal-cost structure each method supports;
+``Convergence'' refers to the strongest known theoretical guarantee for the method as actually implemented (rather than for an idealized population-level limit);
+``Per-iter'' is the asymptotic per-iteration cost scaling
+($M$ = random-feature count, $N$ = batch size, $\tau$ = SDE time steps, $P_\theta$ = network parameter count).}
+\label{tab:baseline_comparison}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccccc}
+\toprule
+Method & Reference & Networks & Cost class & Convergence & Per-iter \\
+\midrule
+\textbf{Ours} & this paper & $1$ (drift) & MMD + weakly cts.\ $\mathcal{R}$ & sample-level a.s.\ + rate & $O(NM+\tau P_\theta)$ \\
+APAC-Net & \cite{lin-etal:2021apac} & $2$ (pop.\,+\,ctrl.) & Lagrangian, no soft target & PDE-level (asymptotic) & $O(\tau P_\theta)$ \\
+ML-MFG & \cite{rut-etal:2020} & $1$ (value fn.) & local + interaction (HJB form) & PDE-level (asymptotic) & $O(\tau P_\theta)$ \\
+Deep MFG/MFC & \cite{car-lau:2022,car-lau:2021} & $2$--$3$ & general $f(\cdot,\nu)$, $g(\cdot,\nu)$ & population-level & $O(\tau P_\theta)$ \\
+DSB / DSBM & \cite{de-etal:2021,shi-etal:2023dsbm} & $2$ (score) & SBP only ($c=0$) & empirical & $O(\tau P_\theta)$ \\
+SB max-lik. & \cite{var-etal:2021} & $2$ & SBP only ($c=0$) & empirical & $O(\tau P_\theta)$ \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+Three structural distinctions are worth highlighting.
+\emph{First}, our method uses a single drift network, whereas APAC-Net, DSB, DSBM and the deep MFG/MFC variants use two or more (e.g., a control network and a population/score network, or a value function and a forward-backward pair).
+The reason is structural.
+The terminal MMD penalty $\gamma_K^2(\mathcal{L}(X_T^{(n)}),\mu_T)$ is a functional of the controlled marginal $\mathcal{L}(X_T^{(n)})$
+that can be estimated directly from sampled controlled paths,
+without learning the density or score of $\mathcal{L}(X_T^{(n)})$.
+In contrast, deep-learning MFG/SBP methods that target a hard distributional constraint or a score-matching objective
+need an explicit estimate of the population density or score,
+which is provided by an auxiliary population or score network.
+\emph{Second}, our convergence theorem operates at the \emph{sample} level for the empirical objective that is actually minimized
+(Theorem~\ref{thm:convergence} and Proposition~\ref{prop:rate_mfg}),
+whereas the comparison methods either provide population-level guarantees (deep MFG/MFC of \cite{car-lau:2022}) or no explicit convergence statement in the sampled regime (APAC-Net, DSB, DSBM).
+\emph{Third}, our per-iteration cost on the kernel-MMD terms is the explicit $O(NM)$ of the random-feature representation;
+the comparison methods rely on neural-network forward/backward passes whose cost is implicit in $P_\theta$.
+
+\paragraph{Direct numerical comparison.}
+A fair head-to-head benchmark with the above baselines is non-trivial because of differing problem formulations:
+APAC-Net and Ruthotto et al.\ solve HJB-style problems without a soft distributional terminal target,
+and DSB / DSBM target the SBP specialisation $c=0$ via score-matching rather than a penalty.
+The deep MFG/MFC framework of \cite{car-lau:2022,car-lau:2021} admits per-agent costs $f(t,x,\alpha,\nu)$, $g(x,\nu)$
+and in fact subsumes our kernel-MMD terminal cost as a special $g(x,\nu)$;
+adopting that methodology would, however, replace our unbiased $O(NM)$ estimator
+by a biased sample mean, introduce a separate population or value-function network,
+and yield population-level rather than sample-level guarantees.
+The generalised conditional-gradient method of \cite{nakam-sai:2026loc,nakam-sai:2026disc}
+proves non-asymptotic convergence rates for potential MFGs with local coupling
+on fully discretised finite-difference grids, which is complementary in scope:
+their analysis is sharp on the grid but inherits the curse of dimensionality,
+whereas our sample-level rate (Proposition~\ref{prop:rate_mfg}) is mesh-free
+and applies to nonlocal kernel-MMD and aggregate-demand couplings.
+A quantitative benchmark on a common instance well suited to all candidate methods is left for future work;
+Section~\ref{sec:5.5comp} gives the within-framework comparison of the RF $U$-statistic against the $O(N^2)$ kernel method of \cite{nak:2024sb}.
+
+
+%%%------------------------------------------------------------------------
+\section{Proofs}\label{sec:6}
+%%%------------------------------------------------------------------------
+
+%%
+\subsection{Proof of Theorem \ref{thm:rfu_unbiased}}\label{sec:6.1}
+
+We prove each part separately.
+
+\noindent
+(i) Unbiasedness.
+Fix $z\in\RR^d$.
+By expanding the squares in \eqref{eq:3.2},
+\begin{align*}
+ (S_c^X(z))^2 + (S_s^X(z))^2
+ &= \sum_{i=1}^N\sum_{j=1}^N\bigl(\cos(z^{\mathsf{T}}X_i)\cos(z^{\mathsf{T}}X_j) + \sin(z^{\mathsf{T}}X_i)\sin(z^{\mathsf{T}}X_j)\bigr) \\
+ &= \sum_{i=1}^N\sum_{j=1}^N\cos(z^{\mathsf{T}}(X_i-X_j)) = N + \sum_{\substack{i,j=1\\i\neq j}}^N\cos(z^{\mathsf{T}}(X_i-X_j)),
+\end{align*}
+where we used $\cos(a-b)=\cos a\cos b + \sin a\sin b$ and $\cos(0)=1$.
+Since $X_1,\ldots,X_N$ are i.i.d.\ from $\mu$ and $X,X'$ denote independent copies with law $\mu$,
+\[
+ \sum_{\substack{i,j=1\\i\neq j}}^N\EE\left[\cos(z^{\mathsf{T}}(X_i-X_j))\right]
+ = N(N-1)\EE[\cos(z^{\mathsf{T}}(X-X'))].
+\]
+Therefore
+\begin{equation}\label{eq:6.1}
+ \EE[U_{XX}(z)]
+ = \frac{\EE[(S_c^X(z))^2 + (S_s^X(z))^2 - N]}{N(N-1)}
+ = \EE[\cos(z^{\mathsf{T}}(X-X'))].
+\end{equation}
+Similarly, $\EE[U_{YY}(z)] = \EE[\cos(z^{\mathsf{T}}(Y-Y'))]$ where $Y,Y'$ are independent copies with law $\nu$.
+
+For the cross term \eqref{eq:3.3}, since $(X_i, Y_j)$ are independent for all pairs,
+\begin{align*}
+ \EE[V_{XY}(z)]
+ &= \frac{1}{N^2}\sum_{i=1}^N\sum_{j=1}^N \EE[\cos(z^{\mathsf{T}}(X_i-Y_j))] = \EE[\cos(z^{\mathsf{T}}(X-Y))].
+\end{align*}
+Therefore, for each fixed $z$,
+\[
+ \EE[U_{XX}(z) - 2V_{XY}(z) + U_{YY}(z)]
+ = \EE[\cos(z^{\mathsf{T}}(X-X'))] - 2\EE[\cos(z^{\mathsf{T}}(X-Y))] + \EE[\cos(z^{\mathsf{T}}(Y-Y'))].
+\]
+Now, averaging over $Z_1,\ldots,Z_M$ and applying the tower property, we have 
+\begin{align*}
+ \EE[\hat{\gamma}_{M,N}^2]
+ &= \frac{\Phi(0)}{M}\sum_{r=1}^M\EE\bigl[\EE[U_{XX}(Z_r) - 2V_{XY}(Z_r) + U_{YY}(Z_r)\,|\, Z_r]\bigr] \\
+ &= \Phi(0)\,\EE\bigl[\EE[\cos(Z^{\mathsf{T}}(X-X'))\,|\, Z] - 2\EE[\cos(Z^{\mathsf{T}}(X-Y))\,|\, Z] + \EE[\cos(Z^{\mathsf{T}}(Y-Y'))\,|\, Z]\bigr] \\
+ &= \gamma_K(\mu,\nu)^2,
+\end{align*}
+where the last step uses the representation \eqref{eq:repre}.
+
+\noindent
+(ii) Complexity.
+For each frequency $z=Z_r$, computing $S_c^X(z)$ and $S_s^X(z)$ requires $O(N)$ operations,
+namely evaluating $\cos(z^{\mathsf{T}}X_i)$ and $\sin(z^{\mathsf{T}}X_i)$ for $i=1,\ldots,N$ and summing.
+The same complexity holds for $S_c^Y(z)$ and $S_s^Y(z)$.
+From these four sums, $U_{XX}(z)$, $V_{XY}(z)$, and $U_{YY}(z)$ are each computed in $O(1)$.
+Since there are $M$ frequencies, the total cost is $O(NM)$.
+
+\medskip\noindent
+(iii) Variance.
+Let
+\[
+ g(z) := \Phi(0)\bigl[U_{XX}(z) - 2V_{XY}(z) + U_{YY}(z)\bigr],
+\]
+so that $\hat{\gamma}_{M,N}^2 = \frac{1}{M}\sum_{r=1}^M g(Z_r)$.
+Note that $g(z)$ depends on the data $D := (X_1,\ldots,X_N,Y_1,\ldots,Y_N)$,
+which is shared across all frequencies $Z_1,\ldots,Z_M$.
+Hence $g(Z_1),\ldots,g(Z_M)$ are conditionally independent given $D$.
+Conditioning on $D$ via the law of total variance, we get 
+\begin{equation}\label{eq:6.2}
+ \mathrm{Var}(\hat{\gamma}_{M,N}^2)
+ = \EE\!\left[\mathrm{Var}\!\left(\hat{\gamma}_{M,N}^2 \,|\, D\right)\right]
+ + \mathrm{Var}\!\left(\EE\!\left[\hat{\gamma}_{M,N}^2 \,|\, D\right]\right).
+\end{equation}
+
+Let us observe the conditional term.
+Given $D$, the frequencies $Z_1,\ldots,Z_M$ are i.i.d., so
+\[
+ \mathrm{Var}(\hat{\gamma}_{M,N}^2\,|\, D) = \frac{1}{M}\,\mathrm{Var}(g(Z_1)\,|\, D).
+\]
+From \eqref{eq:3.2}--\eqref{eq:3.3} and the trivial bounds $|U_{XX}(z)|, |V_{XY}(z)|, |U_{YY}(z)| \le 1$,
+$|g(z)|\le 4\Phi(0)$ uniformly in $z$ and $D$.
+Hence $\mathrm{Var}(g(Z_1) \mid D) \le 16\Phi(0)^2$, and therefore
+$\EE[\mathrm{Var}(\hat{\gamma}_{M,N}^2\,|\, D)] = O(1/M)$.
+
+As for the marginal term, a direct computation of the conditional expectation $\EE[g(Z_1)\,|\, D]$ gives 
+\begin{equation}
+\label{eq:6.tower}
+\begin{aligned}
+ \EE[g(Z_1)\,|\, D]
+ &= \Phi(0)\EE\bigl[U_{XX}(Z) - 2V_{XY}(Z) + U_{YY}(Z) \bigm| D\bigr]  \\
+ &= \frac{1}{N(N-1)}\sum_{\substack{i,j=1\\i\neq j}}^N K(X_i,X_j)
+   - \frac{2}{N^2}\sum_{i,j=1}^N K(X_i,Y_j)
+   + \frac{1}{N(N-1)}\sum_{\substack{i,j=1\\i\neq j}}^N K(Y_i,Y_j) \\
+ &=: \bar{\gamma}_K^2(D), 
+\end{aligned}
+\end{equation}
+where we used $\Phi(0)\EE[\cos(Z^{\mathsf{T}}(x-y))] = \Phi(x-y) = K(x,y)$ by \eqref{eq:2.3}.
+Thus $\EE[\hat{\gamma}_{M,N}^2\,|\, D] = \bar{\gamma}_K^2(D)$ coincides with
+the kernel $U$-statistic estimator \eqref{eq:empirical_mmd}.
+It remains to bound $\mathrm{Var}(\bar{\gamma}_K^2(D))$.
+Write
+\[
+ \bar{\gamma}_K^2(D) = T_{XX} - 2 T_{XY} + T_{YY},
+\]
+where
+\begin{align*}
+ T_{XX} &= \frac{1}{N(N-1)}\sum_{i\neq j} K(X_i,X_j),\quad
+ T_{YY} = \frac{1}{N(N-1)}\sum_{i\neq j} K(Y_i,Y_j),\\
+ T_{XY} &= \frac{1}{N^2}\sum_{i,j=1}^{N} K(X_i,Y_j).
+\end{align*}
+The terms $T_{XX}$ and $T_{YY}$ are one-sample $U$-statistics of degree $2$
+with symmetric kernel $K(\cdot,\cdot)$,
+and $T_{XY}$ is a two-sample $U$-statistic of degree $(1,1)$ with kernel $K(\cdot,\cdot)$.
+
+By Hoeffding's variance formula for one-sample $U$-statistics
+\cite[Section~5.2]{ser:1980},
+\[
+ \mathrm{Var}(T_{XX}) = \frac{2}{N(N-1)}\bigl[2(N-2)\,\zeta_1^{X} + \zeta_2^{X}\bigr],
+\]
+where the Hoeffding variance components are
+\[
+ \zeta_1^{X} = \mathrm{Var}\bigl(\EE[K(X_1,X_2)\mid X_1]\bigr),\quad
+ \zeta_2^{X} = \mathrm{Var}\bigl(K(X_1,X_2)\bigr).
+\]
+The uniform bound $|K(x,y)|\le \Phi(0)$ yields $\zeta_1^{X},\,\zeta_2^{X}\le \Phi(0)^2$,
+hence $\mathrm{Var}(T_{XX}) \le 4\Phi(0)^2/N$ for $N\ge 2$.
+The same bound applies to $T_{YY}$ with corresponding components $\zeta_1^{Y}, \zeta_2^{Y}\le\Phi(0)^2$.
+
+To estimate the cross term $T_{XY}$, we use the representation
+\[
+ \mathrm{Var}(T_{XY}) = \mathrm{Var}\bigl(\EE[T_{XY}\,|\, X]\bigr) + \EE\bigl[\mathrm{Var}(T_{XY}\,|\, X)\bigr].
+\]
+Setting $\bar{K}_{\nu}(x):=\int_{\RR^d}K(x,y)\,\nu(dy)$, we have
+$\EE[T_{XY}\,|\, X] = \frac{1}{N}\sum_{i=1}^N\bar{K}_{\nu}(X_i)$, so that
+\[
+ \mathrm{Var}\bigl(\EE[T_{XY}\,|\, X]\bigr)
+ = \frac{1}{N}\mathrm{Var}\bigl(\bar{K}_{\nu}(X_1)\bigr)
+ \le \frac{\Phi(0)^2}{N},
+\]
+where we used $|\bar{K}_{\nu}(x)|\le \Phi(0)$.
+As for the conditional variance term, given $X$ the random variables $Y_1,\ldots,Y_N$ are i.i.d., so we have 
+\[
+ \mathrm{Var}(T_{XY}\,|\, X)
+ = \frac{1}{N^2}\sum_{j=1}^N\mathrm{Var}\left(\left.\frac{1}{N}\sum_{i=1}^N K(X_i,Y_j)\,\right|\, X\right)
+ \le \frac{\Phi(0)^2}{N},
+\]
+since the quantity inside the variance is bounded by $\Phi(0)$ in absolute value.
+Therefore, $\mathrm{Var}(T_{XY}) \le 2\Phi(0)^2/N$.
+
+Combining these three estimates via the triangle inequality for the $L^2$-norm, we see 
+\[
+ \sqrt{\mathrm{Var}(\bar{\gamma}_K^2(D))}
+ \le \sqrt{\mathrm{Var}(T_{XX})} + 2\sqrt{\mathrm{Var}(T_{XY})} + \sqrt{\mathrm{Var}(T_{YY})}
+ \le \frac{C\,\Phi(0)}{\sqrt{N}}
+\]
+for some constant $C > 0$, whence $\mathrm{Var}(\bar{\gamma}_K^2(D)) = O(1/N)$.
+Consequently, substituting into \eqref{eq:6.2}, we obtain
+\[
+ \mathrm{Var}(\hat{\gamma}_{M,N}^2) = O(1/M) + O(1/N), 
+\]
+completing the proof of the theorem. 
+
+\begin{rem}\label{rem:6.var}
+The decompositions \eqref{eq:6.2} and \eqref{eq:6.tower} shows that the proposed estimator
+is exactly the kernel $U$-statistic $\bar{\gamma}_K^2(D)$ averaged over random frequencies:
+the random Fourier representation contributes only the conditional variance term $O(1/M)$,
+while the irreducible sample variance $O(1/N)$ inherent to the kernel $U$-statistic is preserved.
+This decomposition is also consistent with Lemma~\ref{lem:strong_consistency}:
+both the kernel $U$-statistic $\bar{\gamma}_K^2(D)\to\gamma_K^2$ as $N\to\infty$,
+and the random-feature average $\hat{\gamma}_{M,N}^2 - \bar{\gamma}_K^2(D)\to 0$, $M\to\infty$,
+contribute to the joint a.s.\ convergence used in Theorem~\ref{thm:convergence}.
+\end{rem}
+
+
+%%
+\subsection{Proof of Theorem~\ref{thm:rfu_interaction}}\label{sec:6.1interaction}
+
+The proof follows the same template as that of Theorem~\ref{thm:rfu_unbiased} given in Section~\ref{sec:6.1}.
+Since the interaction $\mathcal{R}[\nu]$ involves only the $X$-sample,
+the cross terms $V_{XY}$ and $U_{YY}$ are absent, and $(K,\Phi,\rho)$ is replaced by $(W,\Psi,\rho_W)$.
+We prove each part separately.
+
+\noindent
+(i) Unbiasedness.
+Fix $\tilde z\in\RR^d$.
+By the algebraic identity used in the derivation of \eqref{eq:3.2},
+\[
+ (S_c^X(\tilde z))^2 + (S_s^X(\tilde z))^2
+ = N + \sum_{\substack{i,j=1\\i\neq j}}^N\cos(\tilde z^{\mathsf{T}}(X_i-X_j)).
+\]
+Since $X_1,\ldots,X_N$ are i.i.d.\ from $\nu$ and $X,X'$ denote independent copies with law $\nu$,
+\[
+ \sum_{\substack{i,j=1\\i\neq j}}^N\EE\bigl[\cos(\tilde z^{\mathsf{T}}(X_i-X_j))\bigr]
+ = N(N-1)\,\EE\bigl[\cos(\tilde z^{\mathsf{T}}(X-X'))\bigr],
+\]
+and therefore
+\begin{equation}\label{eq:6.UXX_W}
+ \EE[U_{XX}(\tilde z)]
+ = \frac{\EE[(S_c^X(\tilde z))^2+(S_s^X(\tilde z))^2-N]}{N(N-1)}
+ = \EE\bigl[\cos(\tilde z^{\mathsf{T}}(X-X'))\bigr].
+\end{equation}
+Averaging over $\tilde Z_1,\ldots,\tilde Z_M\sim\rho_W/\Psi(0)$ and applying the tower property,
+\begin{align*}
+ \EE\bigl[\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\bigr]
+ &= \frac{\Psi(0)}{2M}\sum_{r=1}^M
+    \EE\bigl[\EE[U_{XX}(\tilde Z_r)\,|\,\tilde Z_r]\bigr] \\
+ &= \frac{\Psi(0)}{2}\,\EE\bigl[\EE[\cos(\tilde Z^{\mathsf{T}}(X-X'))\,|\,\tilde Z]\bigr]
+ = \mathcal{R}[\nu],
+\end{align*}
+where the last equality uses the Fourier representation \eqref{eq:repre_R}.
+
+\medskip\noindent
+(ii) Complexity.
+For each frequency $\tilde z=\tilde Z_r$, computing $S_c^X(\tilde z)$ and $S_s^X(\tilde z)$ requires $O(N)$ operations,
+namely evaluating $\cos(\tilde z^{\mathsf{T}}X_i)$ and $\sin(\tilde z^{\mathsf{T}}X_i)$ for $i=1,\ldots,N$ and summing.
+From these two sums, $U_{XX}(\tilde z)$ is computed in $O(1)$.
+Since there are $M$ frequencies and assembling \eqref{eq:3.5} adds an $O(M)$ overhead,
+the total cost is $O(NM)$.
+
+\medskip\noindent
+(iii) Variance.
+Let
+\[
+ g_W(\tilde z) := \frac{\Psi(0)}{2}\,U_{XX}(\tilde z),
+\]
+so that $\hat{\mathcal{R}}_{M,N}[\hat\nu^N]=\frac{1}{M}\sum_{r=1}^M g_W(\tilde Z_r)$.
+Note that $g_W(\tilde z)$ depends on the data $D_X:=(X_1,\ldots,X_N)$,
+which is shared across all frequencies $\tilde Z_1,\ldots,\tilde Z_M$.
+Hence $g_W(\tilde Z_1),\ldots,g_W(\tilde Z_M)$ are conditionally independent given $D_X$.
+Conditioning on $D_X$ via the law of total variance, we get
+\begin{equation}\label{eq:6.var_W}
+ \mathrm{Var}\bigl(\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\bigr)
+ = \EE\!\left[\mathrm{Var}\!\left(\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\,|\,D_X\right)\right]
+ + \mathrm{Var}\!\left(\EE\!\left[\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\,|\,D_X\right]\right).
+\end{equation}
+
+Let us observe the conditional term.
+Given $D_X$, the frequencies $\tilde Z_1,\ldots,\tilde Z_M$ are i.i.d., so
+\[
+ \mathrm{Var}\bigl(\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\,|\,D_X\bigr)
+ = \frac{1}{M}\,\mathrm{Var}(g_W(\tilde Z_1)\,|\,D_X).
+\]
+From the bound $|U_{XX}(\tilde z)|\le 1$, we have $|g_W(\tilde z)|\le \Psi(0)/2$ uniformly in $\tilde z$ and $D_X$.
+Hence $\mathrm{Var}(g_W(\tilde Z_1)\,|\,D_X)\le \Psi(0)^2/4$, and therefore
+$\EE[\mathrm{Var}(\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\,|\,D_X)] = O(1/M)$.
+
+As for the marginal term,
+a direct computation of the conditional expectation $\EE[g_W(\tilde Z_1)\,|\,D_X]$ gives
+\begin{equation}\label{eq:6.tower_W}
+\begin{aligned}
+ \EE[g_W(\tilde Z_1)\,|\,D_X]
+ &= \frac{\Psi(0)}{2}\,\EE\bigl[U_{XX}(\tilde Z)\bigm|D_X\bigr] \\
+ &= \frac{1}{2N(N-1)}\sum_{\substack{i,j=1\\i\neq j}}^N W(X_i,X_j)
+ \;=:\; \bar{\mathcal{R}}_W(D_X),
+\end{aligned}
+\end{equation}
+where we used $\Psi(0)\EE[\cos(\tilde Z^{\mathsf{T}}(x-y))]=\Psi(x-y)=W(x,y)$
+by the analogue of \eqref{eq:2.3} for $W$.
+Thus $\EE[\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\,|\,D_X]=\bar{\mathcal{R}}_W(D_X)$ coincides with the
+kernel $U$-statistic estimator of $\mathcal{R}[\nu]$.
+It remains to bound $\mathrm{Var}(\bar{\mathcal{R}}_W(D_X))$.
+
+Now $\bar{\mathcal{R}}_W(D_X)$ is a one-sample $U$-statistic of degree $2$ with symmetric kernel $\tfrac{1}{2}W(\cdot,\cdot)$.
+By Hoeffding's variance formula for one-sample $U$-statistics
+\cite[Section~5.2]{ser:1980},
+\[
+ \mathrm{Var}(\bar{\mathcal{R}}_W(D_X))
+ = \frac{2}{N(N-1)}\bigl[2(N-2)\,\zeta_1 + \zeta_2\bigr],
+\]
+where the Hoeffding variance components are
+\[
+ \zeta_1 = \mathrm{Var}\!\left(\EE\!\left[\tfrac{1}{2}W(X_1,X_2)\bigm|X_1\right]\right),\qquad
+ \zeta_2 = \mathrm{Var}\!\left(\tfrac{1}{2}W(X_1,X_2)\right).
+\]
+The uniform bound $|W(x,y)|\le \Psi(0)$ yields $\zeta_1,\,\zeta_2\le \Psi(0)^2/4$,
+hence $\mathrm{Var}(\bar{\mathcal{R}}_W(D_X))\le \Psi(0)^2/N$ for $N\ge 2$.
+
+Consequently, substituting into \eqref{eq:6.var_W}, we obtain
+\[
+ \mathrm{Var}\bigl(\hat{\mathcal{R}}_{M,N}[\hat\nu^N]\bigr) = O(1/M) + O(1/N),
+\]
+completing the proof of the theorem.
+\qed
+
+
+%%
+\subsection{Proof of Lemma~\ref{lem:strong_consistency}}\label{sec:6.LemSC}
+
+Decompose $\hat{\gamma}_{M_n,N_n}^2 = \bar{\gamma}_K^2(D_{N_n}) + B_{M_n}$
+as in the proof of Theorem~\ref{thm:rfu_unbiased}(iii) in Section~\ref{sec:6.1},
+where $D_{N_n}=(X_1,\ldots,X_{N_n},Y_1,\ldots,Y_{N_n})$ and
+\[
+ B_{M_n} := \frac{1}{M_n}\sum_{r=1}^{M_n}\bigl[g(Z_r) - \bar{\gamma}_K^2(D_{N_n})\bigr].
+\]
+
+By Hoeffding's theorem on the strong law of large numbers for two-sample $U$-statistics
+\cite[Section~5.4]{ser:1980},
+$\bar{\gamma}_K^2(D_{N_n})\to \gamma_K(\mu,\nu)^2$ as $n\to\infty$, a.s.
+
+Since cosines and sines are bounded by $1$, the Cauchy--Schwarz inequality
+yields $S_c(z)^2+S_s(z)^2\le N^2$.
+Combined with \eqref{eq:3.2}--\eqref{eq:3.3}, this gives $|U_{XX}(z)|, |V_{XY}(z)|, |U_{YY}(z)|\le 1$ for every $z\in\RR^d$ and every realization of the data,
+so
+\[
+ |g(z)| \le \Phi(0)\bigl(|U_{XX}(z)|+2|V_{XY}(z)|+|U_{YY}(z)|\bigr)\le 4\Phi(0),
+\]
+uniformly in $z$ and $D_{N_n}$.
+In particular $|\bar{\gamma}_K^2(D_{N_n})| = |\EE[g(Z_1)\mid D_{N_n}]|\le 4\Phi(0)$.
+
+Fix a realization of $D_{N_n}$ and define
+\[
+ \xi_r := g(Z_r) - \bar{\gamma}_K^2(D_{N_n}), \quad r=1,\ldots,M_n.
+\]
+Since $Z_1,\ldots,Z_{M_n}$ are i.i.d.\ and independent of $D_{N_n}$,
+the $\xi_r$ are, conditionally on $D_{N_n}$, i.i.d.\ with mean zero,
+and take values in the interval
+\[
+ J(D_{N_n}) := \bigl[-4\Phi(0)-\bar{\gamma}_K^2(D_{N_n}),\;4\Phi(0)-\bar{\gamma}_K^2(D_{N_n})\bigr]\subset \RR,
+\]
+which has the length $8\Phi(0)$.
+Hoeffding's inequality \cite[Theorem~2]{hoe:1963} for bounded i.i.d.\ centered random variables therefore gives,
+for every $t>0$,
+\[
+ \mathbb{P}\left(\left.\left|\sum_{r=1}^{M_n}\xi_r\right|\ge t \,\right|\, D_{N_n}\right)
+ \le 2\exp\left(-\frac{2 t^2}{M_n(8\Phi(0))^2}\right).
+\]
+Let $\varepsilon>0$. Setting $t=M_n\varepsilon$ and dividing inside the probability by $M_n$, we get
+\[
+ \mathbb{P}\left(|B_{M_n}|\ge\varepsilon \,|\, D_{N_n}\right)
+ \le 2\exp\left(-\frac{M_n\varepsilon^2}{32\Phi(0)^2}\right).
+\]
+The right-hand side does not depend on the realization of $D_{N_n}$, so taking expectation over $D_{N_n}$ preserves the bound:
+\begin{equation}\label{eq:6.lemmaHoef}
+ \mathbb{P}\bigl(|B_{M_n}|\ge\varepsilon\bigr) \le 2\exp\left(-\frac{M_n\varepsilon^2}{32\Phi(0)^2}\right).
+\end{equation}
+Under the rate condition $M_n/\log n\to\infty$,
+the series $\sum_{n\ge 1}\exp(-M_n\varepsilon^2/(32\Phi(0)^2))$ converges for every fixed $\varepsilon>0$,
+because $M_n\varepsilon^2/(32\Phi(0)^2)\ge 2\log n$ for all sufficiently large $n$.
+The first Borel--Cantelli lemma then yields
+$\mathbb{P}(|B_{M_n}|\ge\varepsilon\;\text{infinitely often})=0$
+for every $\varepsilon>0$,
+hence $B_{M_n}\to 0$ as $n\to\infty$, a.s.
+
+Combining the two parts, we arrive at $\hat{\gamma}_{M_n,N_n}^2\to \gamma_K(\mu,\nu)^2$, a.s.
+\qed
+
+
+%%
+\subsection{Proof of Theorem~\ref{thm:convergence}}\label{sec:6.2}
+
+The proof extends \cite[Theorem~3.1]{nak:2024sb}, which treats the $c=0$ specialization at the population level,
+in two ways: the empirical penalty problem \eqref{eq:4.2} replaces the exact penalty problem along almost every sample path
+via the strong consistency established in Step~$(\mathrm{i})$ below, and the running interaction term
+$c\int_0^T\mathcal{R}[\mathcal{L}(X_t)]\,dt$ enters the chain of inequalities through the same path-wise concentration argument.
+The condition $\lambda_n\varepsilon_n\to 0$ controls the resulting approximation error.
+
+For notational simplicity, we write
+\[
+ \mathcal{C}(u) := \EE\!\left[\int_0^T|u(t,X_t)|^2\,dt\right],\quad
+ \hat{\mathcal{C}}_N(u) := \frac{1}{N}\sum_{i=1}^N\int_0^T |u(t,X_t^{(i)})|^2 dt,\quad
+ \mathcal{R}_T(u) := \int_0^T\mathcal{R}[\mathcal{L}(X_t)]\,dt,
+\]
+and we let $\hat{\mathcal{R}}_T(u)$ denote the empirical counterpart of $\mathcal{R}_T(u)$
+on the time grid $\{t_k\}$ used in Algorithm~\ref{alg:sbp},
+i.e., $\hat{\mathcal{R}}_T(u):=\sum_{k=1}^{q}\hat{\mathcal{R}}_{M,N}[\hat\nu^N_{t_k}]\,(t_k-t_{k-1})$,
+with the number of grid points $q$ fixed and independent of $n$.
+
+\paragraph{Step~$(\mathrm{i})$: strong consistency.}
+We show that, on a measurable set of probability one,
+the empirical terminal MMD${}^2$, the empirical energy, and the empirical interaction integral
+all converge to their population counterparts, uniformly over the relevant family of laws and controls.
+
+By Lemma~\ref{lem:strong_consistency}, applied to each fixed pair $(\nu,\mu_T)$,
+and Lemma~\ref{lem:energy_consistency}, applied to each fixed admissible control $u$,
+combined via a countable union over $n\in\mathbb{N}$,
+there exists a measurable set of probability one on which both
+$\hat{\gamma}_{M_n,N_n}^2(\nu,\mu_T)\to\gamma_K(\nu,\mu_T)^2$ and
+$\hat{\mathcal{C}}_{N_n}(u)\to\mathcal{C}(u)$ as $n\to\infty$,
+for $\nu\in\{\mu_T\}\cup\{\mathcal{L}(X_T^{(n)}):n\ge 1\}$
+and $u\in\{u^*\}\cup\{u_n:n\ge 1\}$,
+where $u^*$ is an optimal control for the constrained problem
+$\inf\{\frac{1}{2}\mathcal{C}(u)+c\mathcal{R}_T(u):u\in\mathcal{A},\,\mathcal{L}(X_T)=\mu_T\}$.
+
+The same Hoeffding plus Borel--Cantelli argument used in the proof of Lemma~\ref{lem:strong_consistency}
+applies to the empirical interaction $\hat{\mathcal{R}}_{M,N}[\hat\nu^N]$.
+Assumption $(A)$ for $W$ gives $|W(x,y)|\le \Psi(0)$ and hence
+$|\hat{\mathcal{R}}_{M,N}[\hat\nu^N]|\le\Psi(0)/2$ uniformly.
+Decomposing $\hat{\mathcal{R}}_{M_n,N_n}[\hat\nu^{N_n}] = \bar{\mathcal{R}}_W(D_{X,N_n}) + B^W_{M_n}$,
+where $\bar{\mathcal{R}}_W(D_{X,N_n}):=\frac{1}{2N_n(N_n-1)}\sum_{i\neq j}W(X_i,X_j)$ is the kernel $U$-statistic of $W$ from \eqref{eq:6.tower_W}
+and $B^W_{M_n}$ is the random-feature residual,
+Hoeffding's inequality applied to $B^W_{M_n}$ gives
+$\mathbb{P}(|B^W_{M_n}|\ge\varepsilon)\le 2\exp(-M_n\varepsilon^2/(8\Psi(0)^2))$.
+Combining with the SLLN for one-sample $U$-statistics
+\cite[Section~5.4]{ser:1980} applied to $\bar{\mathcal{R}}_W(D_{X,N_n})$ and the rate condition $M_n/\log n\to\infty$, we get 
+\begin{equation}\label{eq:6.R_LLN}
+ \hat{\mathcal{R}}_{M_n,N_n}[\hat\nu^{N_n}]\;\xrightarrow{\mathrm{a.s.}}\;\mathcal{R}[\nu]\qquad (n\to\infty),
+\end{equation}
+for each fixed $\nu$.
+A further countable union over the time grid $\{t_k\}_{k=1}^{q}$
+and over the countable family of laws $\{\mathcal{L}(X_{t_k}^{(n)})\}_{n,k\ge 1}$
+yields a measurable set $\Omega_0$ of probability one on which all of the above limits hold simultaneously.
+
+Let $\omega\in\Omega_0$ be fixed.
+By \eqref{eq:4.cond}, there exists $n_0=n_0(\omega)$ such that for $n\ge n_0$,
+\begin{equation}\label{eq:6.LLN}
+\begin{aligned}
+ &\bigl|\hat{\gamma}_{M_n,N_n}^2(\mathcal{L}(X_T^{(n)}),\mu_T) - \gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)^2\bigr|\le \varepsilon_n,\quad
+  \hat{\gamma}_{M_n,N_n}^2(\mu_T,\mu_T)\le \varepsilon_n,\\
+ &\bigl|\hat{\mathcal{C}}_{N_n}(u_n) - \mathcal{C}(u_n)\bigr| \le \varepsilon_n,\quad
+  \bigl|\hat{\mathcal{C}}_{N_n}(u^*) - \mathcal{C}(u^*)\bigr| \le \varepsilon_n,\\
+ &\bigl|\hat{\mathcal{R}}_T(u_n)-\mathcal{R}_T(u_n)\bigr|\le \varepsilon_n,\quad
+  \bigl|\hat{\mathcal{R}}_T(u^*)-\mathcal{R}_T(u^*)\bigr|\le \varepsilon_n,
+\end{aligned}
+\end{equation}
+where the last line uses the uniformity of the bound over the finite time grid.
+
+\paragraph{Step~$(\mathrm{ii})$: $\sqrt{\lambda_n}\,\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)\to 0$.}
+We show that the population terminal discrepancy vanishes faster than $1/\sqrt{\lambda_n}$, almost surely.
+The $\varepsilon_n$-optimality of $u_n$ for \eqref{eq:4.2} gives
+\begin{equation}\label{eq:6.7}
+ \frac{1}{2}\hat{\mathcal{C}}_{N_n}(u_n)
+ + c\hat{\mathcal{R}}_T(u_n)
+ + \lambda_n\,\hat{\gamma}_{M_n,N_n}^2(\mathcal{L}(X_T^{(n)}),\mu_T)
+ \le \hat{H}_{\lambda_n,c,M_n,N_n} + \varepsilon_n.
+\end{equation}
+The optimal control $u^*$ for the constrained MFG satisfies
+$\mathcal{L}(X_T^*)=\mu_T$ and $\frac{1}{2}\mathcal{C}(u^*)+c\mathcal{R}_T(u^*)=H^*_c$.
+Since $u^*$ is admissible for \eqref{eq:4.2}, by \eqref{eq:6.LLN},
+\begin{equation}\label{eq:6.upper}
+ \hat{H}_{\lambda_n,c,M_n,N_n}
+ \le \frac{1}{2}\hat{\mathcal{C}}_{N_n}(u^*) + c\hat{\mathcal{R}}_T(u^*) + \lambda_n\,\hat{\gamma}_{M_n,N_n}^2(\mu_T,\mu_T)
+ \le H^*_c + \bigl(\tfrac{1}{2}+c\bigr)\varepsilon_n + \lambda_n \varepsilon_n.
+\end{equation}
+Substituting \eqref{eq:6.upper} into \eqref{eq:6.7} and using \eqref{eq:6.LLN} on the left-hand side,
+\begin{equation}\label{eq:6.8}
+ \frac{1}{2}\mathcal{C}(u_n)
+ + c\mathcal{R}_T(u_n)
+ + \lambda_n\,\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)^2
+ \le H^*_c + \bigl(\tfrac{5}{2}+2c\bigr)\varepsilon_n + 2\lambda_n\varepsilon_n.
+\end{equation}
+Since $\lambda_n\varepsilon_n\to 0$ and $\varepsilon_n\to 0$ by \eqref{eq:4.cond},
+the right-hand side equals $H^*_c+o(1)$.
+Under $(A)$ the kernel $W$ is non-negative, so $\mathcal{R}[\nu]\ge 0$ for every $\nu$ and hence $\mathcal{R}_T(u_n)\ge 0$.
+Therefore $\lambda_n\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)^2\le H^*_c+o(1)$ is bounded,
+and $\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)\to 0$ since $\lambda_n\to\infty$.
+
+It remains to upgrade this to $\lambda_n\gamma_n^2\to 0$, where $\gamma_n:=\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)$.
+The key ingredient is the following tightness and lower-semicontinuity property,
+which is also used in Step~$(\mathrm{iii})$ below.
+
+\medskip
+\emph{Tightness and lower-semicontinuity.}
+By Girsanov's theorem applied to \eqref{eq:4.0}, for every $u\in\mathcal{A}$
+the law $Q^u:=\mathcal{L}(X^u)$ on $C([0,T];\RR^d)$ is absolutely continuous with respect to the reference law $P^\sigma$
+(under which the canonical process is a Brownian motion of variance $\sigma^2$ started from $\mu_0$),
+and the relative entropy admits the identity
+\begin{equation}\label{eq:6.entropy}
+ H(Q^u\,|\,P^\sigma)
+ = \frac{1}{2\sigma^2}\,\mathcal{C}(u).
+\end{equation}
+For the sequence $\{u_n\}\subset\mathcal{A}$ obtained from \eqref{eq:4.2},
+the bound \eqref{eq:6.8} together with $\mathcal{R}_T(u_n)\ge 0$ gives
+\begin{equation}\label{eq:6.C_bdd}
+ \mathcal{C}(u_n)\;\le\;2H^*_c + o(1),\qquad
+ \mathcal{R}_T(u_n)\;\le\;\frac{H^*_c+o(1)}{c}\quad(\text{when }c>0).
+\end{equation}
+We claim that $\{Q^{u_n}\}_{n\ge 1}$ is tight on $C([0,T];\RR^d)$.
+Decompose the SDE solution as $X_t^{(n)}=X_0+A_t^{(n)}+\sigma B_t$
+with the drift integral $A_t^{(n)}:=\int_0^t u_n(r,X_r^{(n)})\,dr$.
+The Brownian component $\sigma B$ has paths in $C([0,T];\RR^d)$, with the law of $\sigma B$ being Wiener measure, hence tight on $C([0,T];\RR^d)$.
+For the drift component, Cauchy--Schwarz gives
+$|A_t^{(n)}-A_s^{(n)}|\le\sqrt{t-s}\,V_n$ with $V_n:=\bigl(\int_0^T|u_n(r,X_r^{(n)})|^2\,dr\bigr)^{1/2}$,
+so the modulus of continuity satisfies $\omega_{A^{(n)}}(\delta)\le\sqrt{\delta}\,V_n$;
+by Markov's inequality and $\EE V_n^2=\mathcal{C}(u_n)$ uniformly bounded via \eqref{eq:6.C_bdd},
+$\mathbb{P}(\omega_{A^{(n)}}(\delta)\ge\eta)\le\delta\,\EE V_n^2/\eta^2\to 0$ as $\delta\to 0$, uniformly in $n$.
+Combined with the tight initial law $\mu_0$ and the tight Brownian component,
+the modulus-of-continuity criterion for tightness on $C([0,T];\RR^d)$ (Billingsley \cite[Theorem~7.3]{bil:1999})
+yields the tightness of $\{Q^{u_n}\}$.
+
+Let $\hat Q$ be any weak subsequential limit of $\{Q^{u_n}\}$,
+and let $\hat Q_t$ denote its marginal at time $t\in[0,T]$.
+For each fixed $t$, the evaluation map
+$\pi_t:C([0,T];\RR^d)\to\RR^d$, $\omega\mapsto\omega(t)$,
+is continuous, so the continuous mapping theorem
+\cite[Theorem~2.7]{bil:1999} applied to $\pi_t$
+yields $\mathcal{L}(X_t^{(n)})=Q^{u_n}\circ\pi_t^{-1}\to\hat Q\circ\pi_t^{-1}=\hat Q_t$ weakly on $\cP(\RR^d)$
+along the subsequence.
+At $t=T$, combined with $\gamma_n\to 0$ and the fact that $\gamma_K$ metrizes the weak topology on $\cP(\RR^d)$ under $(A)$ (Remark~\ref{rem:2.1}),
+\begin{equation}\label{eq:6.terminal}
+ \hat Q_T = \mu_T.
+\end{equation}
+By the lower-semicontinuity of relative entropy under the weak topology
+(see, e.g., \cite[Lemma~1.4.3]{dup-ell:1997}) and \eqref{eq:6.entropy},
+\begin{equation}\label{eq:6.lsc_C}
+ \tfrac{1}{2}\mathcal{C}(\hat u)\;:=\;\sigma^2\,H(\hat Q\,|\,P^\sigma)
+ \;\le\;\sigma^2\,\liminf_{n\to\infty}H(Q^{u_n}\,|\,P^\sigma)
+ \;=\;\tfrac{1}{2}\liminf_{n\to\infty}\mathcal{C}(u_n),
+\end{equation}
+where $\hat u$ denotes the drift corresponding to $\hat Q$.
+Moreover, since $W\in C_b(\RR^d\times\RR^d)$ under $(A)$,
+the functional $\nu\mapsto\mathcal{R}[\nu]=\frac{1}{2}\iint W(x,y)\nu(dx)\nu(dy)$ is continuous on $\cP(\RR^d)$,
+and the marginal convergence $\mathcal{L}(X_t^{(n)})\to\hat Q_t$ established above yields
+$\mathcal{R}[\mathcal{L}(X_t^{(n)})]\to\mathcal{R}[\hat Q_t]$ for every $t\in[0,T]$.
+Combined with the uniform bound $|\mathcal{R}[\mathcal{L}(X_t^{(n)})]|\le\Psi(0)/2$
+and bounded convergence on $[0,T]$,
+\begin{equation}\label{eq:6.cont_R}
+ \mathcal{R}_T(u_n)\;\xrightarrow{}\;\mathcal{R}_T(\hat u)\quad(n\to\infty,\;\text{along the subsequence}).
+\end{equation}
+Combining \eqref{eq:6.terminal}, \eqref{eq:6.lsc_C}, \eqref{eq:6.cont_R}, and the constrained definition of $H^*_c$,
+\begin{equation}\label{eq:6.liminf}
+ H^*_c\;\le\;\tfrac{1}{2}\mathcal{C}(\hat u)+c\mathcal{R}_T(\hat u)
+ \;\le\;\liminf_{n\to\infty}\Bigl[\tfrac{1}{2}\mathcal{C}(u_n)+c\mathcal{R}_T(u_n)\Bigr]
+\end{equation}
+along every weakly convergent subsequence.
+A standard sub-subsequence argument extends \eqref{eq:6.liminf} to the full sequence.
+
+\medskip
+\emph{Conclusion of Step~$(\mathrm{ii})$.}
+Suppose, for contradiction, that $\limsup_n\lambda_n\gamma_n^2\ge 5\delta$ for some $\delta>0$.
+Extract a subsequence (still denoted $\{n\}$) along which $\lambda_n\gamma_n^2\ge 4\delta$ for all sufficiently large $n$.
+From \eqref{eq:6.8},
+\[
+ \tfrac{1}{2}\mathcal{C}(u_n)+c\mathcal{R}_T(u_n)\;\le\;H^*_c-4\delta+o(1)\quad\text{along the subsequence}.
+\]
+Applying \eqref{eq:6.liminf} along the same subsequence,
+\[
+ H^*_c\;\le\;\liminf_{n\to\infty}\Bigl[\tfrac{1}{2}\mathcal{C}(u_n)+c\mathcal{R}_T(u_n)\Bigr]\;\le\;H^*_c-4\delta,
+\]
+which is impossible.
+Hence $\lim_{n\to\infty}\lambda_n\gamma_n^2=0$,
+i.e., $\sqrt{\lambda_n}\,\gamma_K(\mathcal{L}(X_T^{(n)}),\mu_T)\to 0$,
+which proves conclusion~(i) of Theorem~\ref{thm:convergence}.
+
+\paragraph{Step~$(\mathrm{iii})$: $\hat{H}_{\lambda_n,c,M_n,N_n}\to H^*_c$.}
+We show that the empirical penalty value converges to the constrained MFG value, almost surely.
+
+The upper bound $\limsup_{n\to\infty}\hat{H}_{\lambda_n,c,M_n,N_n}\le H^*_c$ follows from \eqref{eq:6.upper}
+together with $\lambda_n\varepsilon_n\to 0$ and $\varepsilon_n\to 0$.
+
+For the lower bound, \eqref{eq:6.7} together with $\hat{\gamma}_{M_n,N_n}^2\ge 0$ gives
+\[
+ \hat{H}_{\lambda_n,c,M_n,N_n}+\varepsilon_n
+ \;\ge\;\tfrac{1}{2}\hat{\mathcal{C}}_{N_n}(u_n)+c\hat{\mathcal{R}}_T(u_n).
+\]
+By \eqref{eq:6.LLN},
+$\hat{\mathcal{C}}_{N_n}(u_n)\ge \mathcal{C}(u_n)-\varepsilon_n$ and $\hat{\mathcal{R}}_T(u_n)\ge \mathcal{R}_T(u_n)-\varepsilon_n$,
+so
+\[
+ \hat{H}_{\lambda_n,c,M_n,N_n}+\bigl(\tfrac{3}{2}+c\bigr)\varepsilon_n
+ \;\ge\;\tfrac{1}{2}\mathcal{C}(u_n)+c\mathcal{R}_T(u_n).
+\]
+Taking $\liminf_n$ and applying \eqref{eq:6.liminf},
+\[
+ \liminf_{n\to\infty}\hat{H}_{\lambda_n,c,M_n,N_n}
+ \;\ge\;\liminf_{n\to\infty}\Bigl[\tfrac{1}{2}\mathcal{C}(u_n)+c\mathcal{R}_T(u_n)\Bigr]
+ \;\ge\;H^*_c.
+\]
+Combined with the upper bound, $\lim_n\hat{H}_{\lambda_n,c,M_n,N_n}=H^*_c$,
+which proves conclusion~(ii) of Theorem~\ref{thm:convergence}.
+This completes the proof.
+\qed
+
+
+\begin{rem}\label{rem:6.3}
+By Lemma~\ref{lem:strong_consistency}, the strong law gives
+$\hat{\gamma}_{M,N}^2-\gamma_K^2 = o(1)$ a.s.\ as $M,N\to\infty$, so for any deterministic sequences
+$M_n,N_n\to\infty$ the path-wise rate of this convergence may be absorbed into $\varepsilon_n$
+without imposing additional quantitative conditions on $(M_n,N_n)$.
+This contrasts with approaches based on biased random-feature estimators (cf.\ Remark~\ref{rem:3.2}),
+which require explicit control of the approximation error and an extra penalty correction.
+In the stochastic optimization setting of Algorithm~\ref{alg:sbp},
+quantitative bounds on $\varepsilon_n$ follow from the variance estimate of Theorem~\ref{thm:rfu_unbiased}(iii):
+the in-probability counterpart of $\lambda_n\varepsilon_n\to 0$ amounts to $\lambda_n/\sqrt{M_n}\to 0$ and $\lambda_n/\sqrt{N_n}\to 0$.
+\end{rem}
+
+
+%%
+\subsection{Proof of Proposition~\ref{prop:convergence_general}}\label{sec:6.2gen}
+
+The proof of Theorem~\ref{thm:convergence} given in Section~\ref{sec:6.2} uses three structural properties of the running cost:
+non-negativity, weak continuity, and a.s.\ consistency of the empirical estimator.
+All three are now assumed directly:
+the consistency hypothesis \eqref{eq:4.R_general_consistency} replaces the consistency
+obtained in Step~$(\mathrm{i})$ via Hoeffding's inequality and Borel--Cantelli applied to the random-feature residual $B^W_{M_n}$,
+and Steps~$(\mathrm{ii})$--$(\mathrm{iii})$ carry over verbatim with $\hat{\mathcal{R}}_{M_n,N_n}$ replaced by $\hat{\mathcal{R}}_{N_n}$.
+\qed
+
+
+%%
+\subsection{Proof of Proposition~\ref{prop:rate}}\label{sec:6.3rate}
+
+We refine the path-wise inequalities \eqref{eq:6.LLN}
+in the proof of Theorem~\ref{thm:convergence} given in Section~\ref{sec:6.2} to have explicit Hoeffding rates,
+and substitute the refined bounds into the chain \eqref{eq:6.upper}--\eqref{eq:6.8}.
+
+\paragraph{Step~$(\mathrm{i})$: rate for $\hat{\gamma}_{M_n,N_n}^2$.}
+We establish a quantitative Hoeffding rate for the random-feature MMD${}^2$ estimator,
+which refines the qualitative input \eqref{eq:6.LLN}.
+
+By the Hoeffding bound \eqref{eq:6.lemmaHoef} in the proof of Lemma~\ref{lem:strong_consistency},
+applied to the random-feature residual $B_{M_n}$ conditional on the data,
+\[
+ \mathbb{P}\bigl(|B_{M_n}|\ge t\bigr)
+ \le 2\exp\left(-\frac{M_n t^2}{32\Phi(0)^2}\right), \qquad t>0.
+\]
+Setting $t = 8\Phi(0)\sqrt{2\log n / M_n}$ gives $\mathbb{P}(|B_{M_n}|\ge t)\le 2n^{-2}$,
+which is summable. So the Borel--Cantelli lemma yields
+\begin{equation}\label{eq:6.B_rate}
+ |B_{M_n}|\le 8\Phi(0)\sqrt{2\log n / M_n}\quad\text{for all sufficiently large }n,\;\text{a.s.}
+\end{equation}
+Next, $\bar{\gamma}_K^2(D_{N_n})$ is the two-sample $U$-statistic with kernel
+$h(x,x',y,y'):=K(x,x')-K(x,y')-K(y,x')+K(y,y')$ bounded by $4\Phi(0)$.
+By Hoeffding's inequality for two-sample $U$-statistics \cite[Theorem~5.6.1.A]{ser:1980},
+for any fixed pair $(\mu,\nu)$ and any $t>0$,
+\[
+ \mathbb{P}\bigl(\bigl|\bar{\gamma}_K^2(D_{N_n}) - \gamma_K(\mu,\nu)^2\bigr|\ge t\bigr)
+ \le 2\exp\!\left(-\tfrac{N_n t^2}{32\Phi(0)^2}\right).
+\]
+The same Borel--Cantelli argument gives, for every fixed pair $(\mu,\nu)$,
+\begin{equation}\label{eq:6.U_rate}
+ \bigl|\bar{\gamma}_K^2(D_{N_n}) - \gamma_K(\mu,\nu)^2\bigr|
+ \le 8\Phi(0)\sqrt{2\log n / N_n}\quad\text{for all sufficiently large }n,\;\text{a.s.}
+\end{equation}
+Under (H2), the samples at iteration $n$ are independent of $u_n$, so we may apply
+\eqref{eq:6.B_rate}--\eqref{eq:6.U_rate} conditionally on $u_n$
+to the pair $(\nu,\mu_1) = (\mathcal{L}(X_1^{(n)}),\mu_1)$ and to the pair $(\mu_1,\mu_1)$, for which $\gamma_K^2=0$.
+Combining via $\hat{\gamma}_{M_n,N_n}^2 = \bar{\gamma}_K^2(D_{N_n}) + B_{M_n}$ and taking a countable union over $n\ge 1$, we obtain a measurable event $\Omega_1$ of probability one such that for $\omega\in\Omega_1$,
+\begin{equation}\label{eq:6.gamma_rate}
+\begin{aligned}
+ \bigl|\hat{\gamma}_{M_n,N_n}^2(\mathcal{L}(X_1^{(n)}),\mu_1)
+ &- \gamma_K(\mathcal{L}(X_1^{(n)}),\mu_1)^2\bigr|\le \delta^\gamma_n,\\
+ \hat{\gamma}_{M_n,N_n}^2(\mu_1,\mu_1)&\le \delta^\gamma_n,
+\end{aligned}
+\end{equation}
+for all sufficiently large $n$, where
+$\delta^\gamma_n := 16\Phi(0)\bigl(\sqrt{2\log n/M_n}+\sqrt{2\log n/N_n}\bigr)$.
+
+\paragraph{Step~$(\mathrm{ii})$: rate for $\hat{\mathcal{C}}_{N_n}$.}
+We establish a Hoeffding rate for the empirical energy.
+
+Recall the population energy and its empirical counterpart on $N$ samples,
+$\mathcal{C}(u) := \EE[\int_0^1|u(t,X_t)|^2\,dt]$ and
+$\hat{\mathcal{C}}_N(u) := \frac{1}{N}\sum_{i=1}^N\int_0^1|u(t,X_t^{(i)})|^2\,dt$,
+introduced in Section~\ref{sec:6.2} with $T=1$.
+Under (H1), the integrand $\int_0^1|u(t,X_t)|^2 dt$ is bounded by $L^2$ for $u\in\{u^*,u_n\}$ and for every path.
+Hoeffding's inequality for sums of bounded i.i.d.\ random variables gives, for every $t>0$,
+\[
+ \mathbb{P}\bigl(|\hat{\mathcal{C}}_{N_n}(u) - \mathcal{C}(u)|\ge t\bigr)
+ \le 2\exp\!\left(-\tfrac{2N_n t^2}{L^4}\right).
+\]
+By (H2), $u_n$ is independent of the samples at iteration $n$, so the same Borel--Cantelli argument applies conditionally on $u_n$ and yields
+\begin{equation}\label{eq:6.energy_rate}
+ |\hat{\mathcal{C}}_{N_n}(u_n) - \mathcal{C}(u_n)|\;\vee\;|\hat{\mathcal{C}}_{N_n}(u^*) - \mathcal{C}(u^*)|
+ \le \delta^{\mathcal{C}}_n
+ \quad\text{for all sufficiently large }n,\;\text{a.s.},
+\end{equation}
+where $\delta^{\mathcal{C}}_n := L^2\sqrt{2\log n/N_n}$.
+
+\paragraph{Step~$(\mathrm{iii})$: assembly.}
+We combine the bounds of Steps~$(\mathrm{i})$--$(\mathrm{ii})$ with the chain \eqref{eq:6.upper}--\eqref{eq:6.8}
+to obtain \eqref{eq:4.rate_emp} and \eqref{eq:4.rate}.
+
+Working on $\Omega_1$ intersected with the analogous event from Step~$(\mathrm{ii})$, both events of probability one,
+we substitute \eqref{eq:6.gamma_rate} and \eqref{eq:6.energy_rate} for the qualitative input \eqref{eq:6.LLN}
+in the chain \eqref{eq:6.upper}--\eqref{eq:6.8} of the proof of Theorem~\ref{thm:convergence},
+keeping the empirical quantities on both sides.
+The upper bound \eqref{eq:6.upper} becomes
+$\hat{H}_{\lambda_n,M_n,N_n}\le H^* + \tfrac{1}{2}\delta^{\mathcal{C}}_n + \lambda_n\delta^\gamma_n$,
+and combining with the $\varepsilon_n$-optimality \eqref{eq:6.7} of $u_n$ yields, after dropping the nonnegative term $\tfrac{1}{2}\hat{\mathcal{C}}_{N_n}(u_n)\ge 0$ on the left-hand side,
+\begin{equation}\label{eq:6.empbound}
+ \lambda_n\,\hat{\gamma}_{M_n,N_n}^2\bigl(\mathcal{L}(X_1^{(n)}),\mu_1\bigr)
+ \le H^* + \varepsilon_n + \tfrac{1}{2}\delta^{\mathcal{C}}_n + \lambda_n\delta^\gamma_n.
+\end{equation}
+Since both $\delta^{\mathcal{C}}_n$ and $\delta^\gamma_n$ carry the factor $\sqrt{\log n/N_n}$
+and $\lambda_n\to\infty$, the ratio $\delta^{\mathcal{C}}_n/\lambda_n$ is dominated by $\delta^\gamma_n$.
+Dividing \eqref{eq:6.empbound} by $\lambda_n$ then yields \eqref{eq:4.rate_emp}
+with a constant $C^*$ that may be taken as $C^*=17\Phi(0)+L^2$.
+The population-level bound \eqref{eq:4.rate} now follows by adding $\delta^\gamma_n$
+to the left-hand side of \eqref{eq:6.empbound} via $\hat{\gamma}_{M_n,N_n}^2\bigl(\mathcal{L}(X_1^{(n)}),\mu_1\bigr)\ge \gamma_K\bigl(\mathcal{L}(X_1^{(n)}),\mu_1\bigr)^2 - \delta^\gamma_n$ from \eqref{eq:6.gamma_rate},
+which absorbs into the same $\sqrt{\log n/M_n}+\sqrt{\log n/N_n}$ term at the cost of an extra factor $2$ on the leading constant.
+The asymptotic rate under the polynomial schedule follows by direct substitution.
+\qed
+
+
+%%
+\subsection{Proof of Proposition~\ref{prop:rate_mfg}}\label{sec:6.3rate_mfg}
+
+The argument of Proposition~\ref{prop:rate} extends to the MFG case
+once one adds a Hoeffding rate for the empirical interaction $\hat{\mathcal{R}}_{M_n,N_n}[\hat\nu^{N_n}_{t}]$
+that parallels \eqref{eq:6.B_rate}--\eqref{eq:6.gamma_rate}.
+Decompose $\hat{\mathcal{R}}_{M_n,N_n}[\hat\nu^{N_n}_{t}] = \bar{\mathcal{R}}_W(D_{X_t,N_n})+B^W_{M_n,t}$
+as in \eqref{eq:6.tower_W}, where $|\bar{\mathcal{R}}_W|\le \Psi(0)/2$ and $|B^W_{M_n,t}|\le \Psi(0)$.
+Hoeffding's inequality applied to $B^W_{M_n,t}$ conditionally on the data gives
+$\mathbb{P}(|B^W_{M_n,t}|\ge\varepsilon)\le 2\exp(-M_n\varepsilon^2/(2\Psi(0)^2))$,
+and Hoeffding's inequality for the one-sample $U$-statistic $\bar{\mathcal{R}}_W$
+gives $\mathbb{P}(|\bar{\mathcal{R}}_W(D_{X_t,N_n})-\mathcal{R}[\mathcal{L}(X_t^{(n)})]|\ge\varepsilon)\le 2\exp(-N_n\varepsilon^2/(2\Psi(0)^2))$ (see, e.g., \cite[Section~5.6]{ser:1980}).
+Setting $\varepsilon=2\Psi(0)\sqrt{2\log n/M_n}$ and $\varepsilon=2\Psi(0)\sqrt{2\log n/N_n}$, respectively,
+and applying Borel--Cantelli as in Step~$(\mathrm{i})$ of Section~\ref{sec:6.3rate},
+\begin{equation}\label{eq:6.R_rate_mfg}
+ \bigl|\hat{\mathcal{R}}_{M_n,N_n}[\hat\nu^{N_n}_t]-\mathcal{R}[\mathcal{L}(X_t^{(n)})]\bigr|
+ \;\le\;\delta^{\mathcal{R}}_n:=4\Psi(0)\Bigl(\sqrt{\tfrac{2\log n}{M_n}}+\sqrt{\tfrac{2\log n}{N_n}}\Bigr)
+\end{equation}
+for all sufficiently large $n$ and every fixed $t\in[0,T]$, almost surely.
+Taking a countable union over the finite time grid $\{t_k\}_{k=1}^{q}$ used in Algorithm~\ref{alg:sbp}
+preserves the rate, and time-integration over $[0,T]$ multiplies $\delta^{\mathcal{R}}_n$ by $T$:
+\[
+ |\hat{\mathcal{R}}_T(u)-\mathcal{R}_T(u)|\;\le\;T\delta^{\mathcal{R}}_n
+\]
+for $u\in\{u^*,u_n\}$, almost surely for all sufficiently large $n$.
+
+Substituting this bound and \eqref{eq:6.gamma_rate}, \eqref{eq:6.energy_rate} into the chain \eqref{eq:6.upper}--\eqref{eq:6.8} of the proof of Theorem~\ref{thm:convergence}
+yields, after dropping the non-negative terms,
+\[
+ \lambda_n\,\hat{\gamma}_{M_n,N_n}^2\bigl(\mathcal{L}(X_T^{(n)}),\mu_T\bigr)
+ \;\le\; H^*_c + \varepsilon_n + \tfrac{1}{2}\delta^{\mathcal{C}}_n + cT\delta^{\mathcal{R}}_n + \lambda_n\delta^\gamma_n.
+\]
+The same argument as in Step~$(\mathrm{iii})$ of Section~\ref{sec:6.3rate}
+(dividing by $\lambda_n$ and absorbing $\delta^{\mathcal{C}}_n/\lambda_n$ and $cT\delta^{\mathcal{R}}_n/\lambda_n$ into $\delta^\gamma_n$)
+produces \eqref{eq:4.rate_mfg} with $C^*_c=17\Phi(0)+L^2+8cT\Psi(0)$.
+The polynomial-schedule rate follows by direct substitution.
+\qed
+
+
+%%
+\subsection{Proof of Corollary~\ref{cor:kernel_convergence}}\label{sec:6.4ker}
+
+We follow the proof of Theorem~\ref{thm:convergence} given in Section~\ref{sec:6.2}
+with $\hat{\gamma}_{M_n,N_n}^2$ replaced by $\bar{\gamma}_K^2(D_{N_n})$ throughout
+and $\hat{H}_{\lambda_n,M_n,N_n}$ replaced by $\hat{H}^{\mathrm{ker}}_{\lambda_n,N_n}$.
+Only the input from Lemma~\ref{lem:strong_consistency} needs to be modified, and
+the energy estimate Lemma~\ref{lem:energy_consistency} is used unchanged.
+
+The decomposition \eqref{eq:6.tower} shows that
+$\bar{\gamma}_K^2(D_{N_n}) = \EE[\hat{\gamma}_{M_n,N_n}^2\,|\,D_{N_n}]$ for every $M_n\ge 1$.
+In particular, $\bar{\gamma}_K^2(D_{N_n})$ is a deterministic functional of the data alone
+and does not involve the random Fourier features.
+By the strong law of large numbers for two-sample $U$-statistics \cite[Section~5.4]{ser:1980}, we have
+\[
+ \bar{\gamma}_K^2(D_{N_n}) \longrightarrow \gamma_K(\mu,\nu)^2,  \quad n\to\infty, \;\;\text{a.s.},
+\]
+under the single condition $N_n\to\infty$.
+This is exactly the first half of the proof of Lemma~\ref{lem:strong_consistency},
+and the random-feature residual $B_{M_n}$ does not appear here.
+Consequently, the Hoeffding--Borel--Cantelli argument used in the proof of Lemma~\ref{lem:strong_consistency}
+to control $B_{M_n}$, which is the source of the rate condition $M_n/\log n\to\infty$ in Theorem~\ref{thm:convergence}, is no longer needed,
+and no condition on a random-feature count is imposed in the statement.
+
+With this substitution, the path-wise inequalities corresponding to \eqref{eq:6.LLN} in the proof of Theorem~\ref{thm:convergence} become the following:
+on a measurable set of probability one, for every sufficiently large $n$ and for the relevant pairs $(\nu,\mu_1)$ used in the proof,
+\[
+ \bigl|\bar{\gamma}_K^2(D_{N_n}) - \gamma_K(\nu,\mu_1)^2\bigr|\le \varepsilon_n,
+ \qquad
+ \bar{\gamma}_K^2(D_{N_n})\bigr|_{\nu=\mu_1}\le \varepsilon_n,
+\]
+together with the energy bounds from Lemma~\ref{lem:energy_consistency}.
+The remaining steps of the proof of Theorem~\ref{thm:convergence}, i.e., the upper bound \eqref{eq:6.upper},
+the contradiction argument in Step~$(\mathrm{ii})$, and the tightness-based liminf argument in Step~$(\mathrm{iii})$,
+use only these path-wise inequalities and the $\varepsilon_n$-optimality of $u_n$, and apply verbatim to the kernel $U$-statistic penalty problem~\eqref{eq:4.kernel_pen}.
+\qed
+
+
+%%%------------------------------------------------------------------------
+\section{Conclusion}\label{sec:7}
+%%%------------------------------------------------------------------------
+
+We have proposed a computational framework for the soft-target version of
+\emph{mean-field optimal transport}, namely a potential / planning MFG
+where both the running interaction cost and the terminal distributional cost are expressed
+through reproducing-kernel maximum mean discrepancies, and applied it to a coordinated electric-vehicle charging problem.
+The framework is sample-linear (per-iteration cost $O(NM)$ in the batch size $N$ and the random-feature count $M$)
+and dimension-agnostic within the per-iteration cost,
+which makes it compatible with the high-dimensional Schr{\"o}dinger-bridge experiments at $d\le 100$
+of Section~\ref{sec:5.3} while remaining moderate in the dimension of the MFG application reported here.
+By combining the Fourier representation of the squared MMD and of the kernel self-interaction
+with $U$-statistic decompositions,
+we obtained unbiased estimators
+$\hat\gamma_{M,N}^2$ (Theorem~\ref{thm:rfu_unbiased})
+and $\hat{\mathcal{R}}_{M,N}[\hat\nu^N]$ (Theorem~\ref{thm:rfu_interaction})
+of complexity $O(NM)$ for the terminal MMD penalty and the interaction cost respectively.
+Both estimators have an explicit variance decomposition $O(1/M)+O(1/N)$,
+which directly underlies the convergence analysis of Section~\ref{sec:4.2conv}.
+
+The theoretical content of the paper is summarized by four results:
+\begin{enumerate}[label=(\arabic*)]
+\item Two unbiased $O(NM)$ estimators of the kernel costs of \eqref{eq:4.cost_decomp},
+each with explicit variance decomposition $O(1/M)+O(1/N)$
+(Theorems~\ref{thm:rfu_unbiased} and~\ref{thm:rfu_interaction}).
+\item A sample-level almost-sure convergence theorem for the empirical potential MFG penalty problem,
+coupling $\lambda_n,M_n,N_n,\varepsilon_n$ through explicit rate conditions
+including the random-feature condition $M_n/\log n\to\infty$ (Theorem~\ref{thm:convergence}),
+with the Schr{\"o}dinger-bridge specialization recovered as Corollary~\ref{cor:sbp_special_case}.
+\item An explicit almost-sure rate of convergence of the form
+$\le(H^*+\varepsilon_n)/\lambda_n+O(\sqrt{\log n/M_n}+\sqrt{\log n/N_n})$
+holding for all sufficiently large $n$, for both the observable empirical penalty and the population $\gamma_K^2$,
+yielding an algebraic rate $\gamma_K=O(n^{-a/2}(\log n)^{1/4})$ a.s.\
+under polynomial schedules $\lambda_n=n^a$, $M_n=N_n=n^{2a}$ (Proposition~\ref{prop:rate}).
+\item Recovery of the Schr{\"o}dinger-bridge problem of \cite{nak:2024sb} as the special case $\mathcal{R}\equiv 0$
+(Corollary~\ref{cor:sbp_special_case}),
+together with the first sample-level convergence guarantee for the empirical kernel-$U$-statistic implementation of that method
+(Corollary~\ref{cor:kernel_convergence}).
+\end{enumerate}
+Numerical experiments demonstrated the framework on two fronts:
+the Schr{\"o}dinger-bridge specialization ($\mathcal{R}\equiv 0$) in dimensions up to $d=100$
+with Gaussian shift and bimodal targets (Sections~\ref{sec:5.2}--\ref{sec:5.3})
+and the supporting convergence diagnostics and computational-scaling experiments
+(Sections~\ref{sec:conv_ver}, \ref{sec:5.5comp});
+and the EV charging fleet potential MFG with per-vehicle physical heterogeneity ($c>0$) in Section~\ref{sec:5ev},
+where the aggregate-demand congestion cost $\mathcal{R}^{(D)}[\nu]=(\int \eta(h)u^{\!*}(s)d\nu)^2$
+reduces peak and time-averaged aggregate demand
+while keeping the deadline SOC mean close to the target;
+the convergence guarantee in this non-kernel-cost setting follows from Proposition~\ref{prop:convergence_general}.
+
+\paragraph{Unbiasedness in practice and in theory.}
+The biased RFF $V$-statistic and the unbiased RF $U$-statistic terminal penalty produce empirically indistinguishable trained drifts across the configurations of Section~\ref{sec:5.1.3vs}.
+We nevertheless adopt the unbiased construction for theoretical reasons:
+it eliminates the $O(\Phi(0)/N)$ population-level penalty floor and yields the clean variance decomposition $O(1/M)+O(1/N)$
+on which Proposition~\ref{prop:rate} relies.
+
+\paragraph{Future directions.}
+Several directions are worth pursuing.
+First, the EV demonstration uses a single physical heterogeneity coordinate;
+enriching $h$ with additional vehicle-level parameters
+(battery capacity, plug-out time uncertainty, comfort preference)
+under $h$-dependent dynamics and a domain-justified distribution is immediate,
+since the $O(N)$ and $O(NM)$ scalings of our estimators carry over.
+Second, richer price-feedback models (piecewise-linear price impact, grid capacity constraints)
+fit within Proposition~\ref{prop:convergence_general}
+through additional terms in $\mathcal{R}[\nu_t]$ or constraints on the admissible drift class.
+Third, the adaptive bandwidth scaling $\alpha=1/d$ could be replaced by deep kernel learning
+where the kernel operates in a learned feature space of lower effective dimension,
+which would be useful for scaling to higher heterogeneity dimensions.
+Fourth, other smart-grid problems (distributed battery storage, demand response, day-ahead market coordination)
+and non-energy MFGs (crowd dynamics, opinion formation, multi-agent reinforcement learning)
+share the structural form of \eqref{eq:1.mfg_intro}--\eqref{eq:1.kernel_costs}
+and admit the same treatment.
+Fifth, extending Proposition~\ref{prop:convergence_general} to weakly lower-semicontinuous running costs
+would accommodate local-density penalties $\int F(\rho)\,dx$ arising in HJB--Fokker--Planck formulations;
+this requires either a stronger consistency mode or an upgrade of the lsc step in the proof of Theorem~\ref{thm:convergence}.
+Sixth, a head-to-head numerical benchmark against deep-learning MFG/SBP baselines
+on a common problem instance would complement the structural comparison of Section~\ref{sec:5.7baselines}.
+
+
+%%%------------------------------------------------------------------------
+\subsection*{Acknowledgements}
+
+This study is supported by JSPS KAKENHI Grant Numbers JP24K06861 and JP26H02001.
+
+
+%\nocite{*}
+\bibliographystyle{spmpsci}
+\bibliography{mybib}
+
+
+\end{document}

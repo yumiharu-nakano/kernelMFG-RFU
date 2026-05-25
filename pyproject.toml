@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kernel_sot"
+version = "0.2.0"
+description = "Kernel-based potential mean-field games with unbiased random Fourier U-statistics."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [{name = "Yumiharu Nakano"}]
+keywords = [
+    "mean-field games",
+    "maximum mean discrepancy",
+    "random Fourier features",
+    "U-statistics",
+    "neural SDE",
+    "Schrödinger bridge",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Intended Audience :: Science/Research",
+]
+dependencies = [
+    "torch>=2.0",
+    "numpy>=1.21",
+    "scipy>=1.10",
+    "matplotlib>=3.5",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yumiharu-nakano/kernelMFG-RFU"
+
+[tool.setuptools]
+packages = ["kernel_sot"]
