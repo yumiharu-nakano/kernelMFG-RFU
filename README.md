@@ -4,6 +4,7 @@ Reference implementation accompanying the paper
 
 > **Kernel-based potential mean-field games with unbiased random Fourier *U*-statistics.**
 > Yumiharu Nakano. 2026.
+> [arXiv:2605.29371](https://arxiv.org/abs/2605.29371)
 
 ## Overview
 
@@ -157,6 +158,7 @@ python experiments/exp_5_5_compute_scaling.py
 @article{nakano2026mfg,
   title  = {Kernel-based potential mean-field games with unbiased random {Fourier} {$U$}-statistics},
   author = {Nakano, Yumiharu},
+  journal = {arXiv preprint arXiv:2605.29371 [math.OC]},
   year   = {2026},
 }
 ```
