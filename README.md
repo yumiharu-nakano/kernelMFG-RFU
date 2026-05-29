@@ -52,8 +52,6 @@ MFG with a physical per-vehicle heterogeneity (log charging-speed multiplier).
 │   ├── exp_5_5_compute_scaling.py           # §5.5    Computational scaling
 │   └── exp_5_6_ev_charging.py               # §5.6    EV charging fleet MFG
 ├── results/                                 # Outputs of experiments (re-generated)
-├── sbp_h02.tex                              # Paper source
-├── sbp_h02.pdf                              # Compiled paper
 ├── requirements.txt
 ├── pyproject.toml
 └── LICENSE
