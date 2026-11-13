@@ -4,13 +4,13 @@ MMD^2 estimators for the Gaussian kernel K(x, y) = exp(-alpha |x - y|^2).
 Three estimators, all unbiased only for the kernel and RF U-statistic:
 
   mmd2_kernel_ustat(X, Y, alpha)
-      Standard kernel U-statistic, O(N^2) complexity.
+      Standard kernel U-statistic, O(d N^2) complexity.
 
   mmd2_rf_ustat(X, Y, M, alpha)
-      Proposed: random Fourier U-statistic, O(NM) complexity, unbiased.
+      Proposed: random Fourier U-statistic, O(d N M) complexity, unbiased.
 
   mmd2_rff_vstat(X, Y, M, alpha)
-      Standard RFF V-statistic (Rahimi-Recht), O(NM) complexity, biased.
+      Standard RFF V-statistic (Rahimi-Recht), O(d N M) complexity, biased.
 """
 
 import math
@@ -25,7 +25,7 @@ def mmd2_kernel_ustat(X: torch.Tensor, Y: torch.Tensor, alpha: float) -> torch.T
                           - 2/N^2 sum_{i,j} K(X_i, Y_j)
                           + 1/(N(N-1)) sum_{i!=j} K(Y_i, Y_j).
 
-    Complexity: O(N^2) for batch size N.
+    Complexity: O(d N^2) for batch size N and dimension d.
 
     Parameters
     ----------
@@ -59,7 +59,7 @@ def mmd2_rf_ustat(
         hat_gamma_{M, N}^2 = (Phi(0)/M) sum_r [U_XX(Z_r) - 2 V_XY(Z_r) + U_YY(Z_r)]
 
     where Z_r ~ N(0, 2 alpha I_d) and U_XX, V_XY, U_YY are computed via
-    sums of cos/sin in O(N) per frequency. Complexity: O(NM).
+    sums of cos/sin in O(N) per frequency. Complexity: O(d N M).
 
     Unbiased for $\gamma_K^2(\mu, \nu)$ for any M >= 1, N >= 2.
 
@@ -120,7 +120,7 @@ def interaction_rf_ustat(
     where W(x, y) = exp(-alpha |x - y|^2) is the Gaussian kernel
     (translation-invariant, positive Fourier transform: Psi(0) = 1, Z ~ N(0, 2 alpha I_d)).
 
-    Construction (cf. Section 3.1.interaction and Theorem 3.2 of the MFG paper):
+    Construction (cf. Section 3.1.interaction and Theorem 3.3 of the MFG paper):
 
         hat_R_{M, N}[hat_nu^N]
             = (Psi(0) / (2 M)) sum_r U_XX(tilde Z_r)
@@ -129,10 +129,10 @@ def interaction_rf_ustat(
     where S_c(z) = sum_i cos(z^T X_i), S_s(z) = sum_i sin(z^T X_i),
     and the random frequencies tilde Z_r ~ N(0, 2 alpha I_d) are independent of the samples.
 
-    Properties (Theorem 3.2):
+    Properties (Theorem 3.3):
       - Unbiased for R[nu] for any M >= 1, N >= 2.
       - Variance = O(1/M) + O(1/N).
-      - O(N M) cost.
+      - O(d N M) cost.
 
     The estimator removes the diagonal self-term of the V-statistic via the (S_c^2 + S_s^2 - N)
     expression, exactly as in the terminal MMD estimator mmd2_rf_ustat.

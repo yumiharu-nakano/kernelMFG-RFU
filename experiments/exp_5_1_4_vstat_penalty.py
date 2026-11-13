@@ -10,7 +10,7 @@ We train two SBPs:
   (i)  U-stat:  penalty = mmd2_rf_ustat   (unbiased)
   (ii) V-stat:  penalty = mmd2_rff_vstat  (biased, standard RFF)
 All other hyperparameters are identical:
-  M=400, N=80, hidden=(128, 64), alpha=0.1, epochs=4000, lam_inv=1e-3.
+  M=400, N=80, hidden=(128, 64), alpha=0.1, epochs=4000, lam_inv=2e-3.
 
 Evaluation: the trained drift's terminal distribution is summarized by
   - E[X_1]_1 (first coordinate, target = 3.0)
@@ -41,7 +41,7 @@ from kernel_sot import (
 
 # Match Section 5.3 d=10 setup exactly (baseline).
 DEFAULT_CFG = {"d": 10, "M": 400, "N": 80, "hidden": (128, 64),
-               "alpha": 0.1, "lam_inv": 1e-3, "epochs": 4000,
+               "alpha": 0.1, "lam_inv": 2e-3, "epochs": 4000,
                "sigma": 0.5, "time_steps": 20, "lr": 1e-3}
 
 

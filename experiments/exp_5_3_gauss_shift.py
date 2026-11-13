@@ -7,9 +7,9 @@ Reproduces Table 3 of the paper (5-seed mean ± std):
   sigma = 0.5, alpha = 1/d.
 
 Hyperparameters per dimension (Table 2):
-  d=10:  M=400,  N=80, hidden=(128, 64),  alpha=0.1,  lam_inv=1e-3,  epochs=4000
-  d=50:  M=800,  N=80, hidden=(256,128),  alpha=0.02, lam_inv=5e-4,  epochs=5000
-  d=100: M=1500, N=80, hidden=(512,256),  alpha=0.01, lam_inv=3e-4,  epochs=6000
+  d=10:  M=400,  N=160, hidden=(128, 64),  alpha=0.1,  lam_inv=2e-3,  epochs=4000
+  d=50:  M=800,  N=160, hidden=(256,128),  alpha=0.02, lam_inv=1e-3,  epochs=5000
+  d=100: M=1500, N=160, hidden=(512,256),  alpha=0.01, lam_inv=6e-4,  epochs=6000
 """
 
 import argparse
@@ -31,9 +31,9 @@ from kernel_sot import (
 
 # Per-dimension hyperparameters from Table 2 of the paper
 CONFIGS = {
-    10:  {"M": 400,  "hidden": (128, 64),  "alpha": 0.1,  "lam_inv": 1e-3, "epochs": 4000},
-    50:  {"M": 800,  "hidden": (256, 128), "alpha": 0.02, "lam_inv": 5e-4, "epochs": 5000},
-    100: {"M": 1500, "hidden": (512, 256), "alpha": 0.01, "lam_inv": 3e-4, "epochs": 6000},
+    10:  {"M": 400,  "hidden": (128, 64),  "alpha": 0.1,  "lam_inv": 2e-3, "epochs": 4000},
+    50:  {"M": 800,  "hidden": (256, 128), "alpha": 0.02, "lam_inv": 1e-3, "epochs": 5000},
+    100: {"M": 1500, "hidden": (512, 256), "alpha": 0.01, "lam_inv": 6e-4, "epochs": 6000},
 }
 
 
@@ -42,7 +42,8 @@ def parse_args():
     p.add_argument("--dims", type=int, nargs="+", default=[10, 50],
                    help="Subset of {10, 50, 100} to run")
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
-    p.add_argument("--N", type=int, default=80)
+    p.add_argument("--N", type=int, default=160,
+                   help="Batch size: paths and target samples drawn per iteration")
     p.add_argument("--sigma", type=float, default=0.5)
     p.add_argument("--time_steps", type=int, default=20)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -64,10 +65,10 @@ def run_one(d, seed, args):
 
     for ep in range(cfg["epochs"]):
         optimizer.zero_grad()
-        x0 = torch.zeros(2 * args.N, d)
+        x0 = torch.zeros(args.N, d)
         x1, ctrl = sde_integrate_with_cost(
             drift, x0, t_grid, args.sigma, t_subsample=8)
-        y = sample_nu(2 * args.N)
+        y = sample_nu(args.N)
         mmd2 = mmd2_rf_ustat(x1, y, M=cfg["M"], alpha=cfg["alpha"])
         loss = ctrl * cfg["lam_inv"] + mmd2
         loss.backward()

@@ -5,7 +5,7 @@ Verifies Corollary 4.2: as M -> infinity, the RF U-statistic penalty converges t
 the kernel U-statistic penalty bar_gamma_K^2(D), and both yield the same SBP solution.
 
 Setup: d=10 Gaussian shift SBP. Compare:
-  (A) Kernel U-stat (M = infinity, O(N^2) cost)
+  (A) Kernel U-stat (M = infinity, O(d N^2) cost)
   (B) RF U-stat with M in {100, 400, 1600}.
 """
 
@@ -33,12 +33,13 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--d", type=int, default=10)
     p.add_argument("--alpha", type=float, default=0.1)
-    p.add_argument("--N", type=int, default=80)
+    p.add_argument("--N", type=int, default=160,
+                   help="Batch size: paths and target samples drawn per iteration")
     p.add_argument("--sigma", type=float, default=0.5)
     p.add_argument("--epochs", type=int, default=5000)
     p.add_argument("--time_steps", type=int, default=20)
     p.add_argument("--hidden", type=int, nargs="+", default=[128, 64])
-    p.add_argument("--lam_inv", type=float, default=1e-3)
+    p.add_argument("--lam_inv", type=float, default=2e-3)
     p.add_argument("--M_values", type=int, nargs="+", default=[100, 400, 1600])
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     p.add_argument("--output_dir", type=str, default="results")
@@ -59,9 +60,9 @@ def run_one(args, seed, method, M=None):
     t0 = time.time()
     for ep in range(args.epochs):
         optimizer.zero_grad()
-        x0 = torch.zeros(2 * args.N, args.d)
+        x0 = torch.zeros(args.N, args.d)
         x1, ctrl = sde_integrate_with_cost(drift, x0, t_grid, args.sigma, t_subsample=8)
-        y = sample_nu(2 * args.N)
+        y = sample_nu(args.N)
         if method == "kernel":
             mmd2 = mmd2_kernel_ustat(x1, y, args.alpha)
         else:

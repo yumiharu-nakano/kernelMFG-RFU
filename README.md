@@ -12,18 +12,21 @@ This paper develops a computational framework for *potential mean-field games* (
 in which the running interaction cost and the terminal target cost are both expressed
 through reproducing-kernel maximum mean discrepancy (MMD) penalties.
 Both costs are estimated from finite-sample empirical distributions using a
-**random Fourier *U*-statistic representation** that is unbiased and has linear cost
-in the batch size *N*.
+**random Fourier *U*-statistic representation** that is unbiased and has cost
+$O(dNM)$, hence linear in the batch size *N* for fixed dimension *d* and number
+of frequencies *M*.
 The drift of the controlled diffusion is parametrized by a neural network and
 trained via stochastic gradient descent.
 
-The paper proves a sample-level almost-sure convergence theorem and an explicit
-non-asymptotic rate of convergence, and recovers the kernel-MMD-penalty
+The paper proves convergence for approximate minimizers of the penalized
+population problem and gives an independent held-out empirical evaluation
+result, together with explicit non-asymptotic bounds. It recovers the kernel-MMD-penalty
 Schrödinger bridge problem of [Nakano 2024] as the special case of a vanishing
 interaction cost.
 Numerical experiments illustrate the method on the Schrödinger bridge problem
-in dimensions up to *d* = 100 and on an electric vehicle charging coordination
-MFG with a physical per-vehicle heterogeneity (log charging-speed multiplier).
+in dimensions up to *d* = 100, test the interaction estimator inside an
+end-to-end MFG optimization, and present a physically consistent electric
+vehicle charging extension with bounded per-vehicle heterogeneity.
 
 ## Repository structure
 
@@ -47,10 +50,13 @@ MFG with a physical per-vehicle heterogeneity (log charging-speed multiplier).
 │   │                                        #         supplementary
 │   ├── exp_5_2_bimodal.py                   # §5.2    Bimodal target (d=2)
 │   ├── exp_5_3_gauss_shift.py               # §5.3    High-dim Gaussian shift
+│   ├── exp_5_3_gaussian_bridge_validation.py# §5.3    Analytic bridge validation
 │   ├── exp_5_4_1_lambda_sweep.py            # §5.4.1  Penalty parameter sweep
 │   ├── exp_5_4_2_kernel_limit.py            # §5.4.2  Kernel U-stat limit (M to inf)
+│   ├── exp_5_4_3_interaction_end_to_end.py  # §5.1.3  Interaction end-to-end test
 │   ├── exp_5_5_compute_scaling.py           # §5.5    Computational scaling
-│   └── exp_5_6_ev_charging.py               # §5.6    EV charging fleet MFG
+│   ├── exp_5_6_ev_charging.py               #          Original pre-revision EV experiment
+│   └── exp_5_6_ev_charging_revised.py       # §5.6    Current EV charging experiment
 ├── results/                                 # Outputs of experiments (re-generated)
 ├── requirements.txt
 ├── pyproject.toml
@@ -77,13 +83,13 @@ larger experiments but are not required.
 import torch
 from kernel_sot import mmd2_rf_ustat, interaction_rf_ustat
 
-# Terminal MMD^2 estimator (unbiased, O(NM)):
+# Terminal MMD^2 estimator (unbiased, O(dNM)):
 X = torch.randn(200, 10)
 Y = 0.5 + torch.randn(200, 10)
 gamma2 = mmd2_rf_ustat(X, Y, M=500, alpha=0.1)
 print(f"hat_gamma^2(X, Y) = {gamma2.item():.4f}")
 
-# Interaction (self-kernel) estimator (unbiased, O(NM)):
+# Interaction (self-kernel) estimator (unbiased, O(dNM)):
 R = interaction_rf_ustat(X, M=500, alpha=0.1)
 print(f"hat_R[hat_nu^N]   = {R.item():.4f}")
 ```
@@ -95,10 +101,10 @@ Reproduce the interaction-estimator microbenchmark of §5.1.3
 python experiments/exp_5_1_3_interaction_estimator.py
 ```
 
-Reproduce the EV charging fleet potential MFG of §5.6 (d=2, default settings):
+Reproduce the physically consistent EV charging experiment of §5.6:
 
 ```bash
-python experiments/exp_5_6_ev_charging.py --d 2 --c 100 --seeds 0 1 2
+python experiments/exp_5_6_ev_charging_revised.py
 ```
 
 ## Running individual experiments
@@ -119,7 +125,13 @@ Examples:
 python experiments/exp_5_3_gauss_shift.py --dims 10 --seeds 0
 
 # Penalty sweep at d=10:
-python experiments/exp_5_4_1_lambda_sweep.py --d 10 --lam_invs 1e-2 1e-3 1e-4 --seeds 0 1 2
+python experiments/exp_5_4_1_lambda_sweep.py --d 10 --lam_invs 2e-2 2e-3 2e-4 --seeds 0 1 2
+
+# Analytic Gaussian-bridge validation with the paper settings:
+python experiments/exp_5_3_gaussian_bridge_validation.py
+
+# End-to-end interaction experiment with the paper settings:
+python experiments/exp_5_4_3_interaction_end_to_end.py
 
 # Computational scaling (kernel vs RF U-stat, MMD only):
 python experiments/exp_5_5_compute_scaling.py
@@ -135,10 +147,12 @@ python experiments/exp_5_5_compute_scaling.py
 | §5.1.4  Effect of the penalty bias on SBP training  | `exp_5_1_4_vstat_penalty.py` and `exp_5_1_4_vstat_bimodal.py` |
 | §5.2    Bimodal target (d = 2)                      | `exp_5_2_bimodal.py`                         |
 | §5.3    High-dimensional Gaussian shift             | `exp_5_3_gauss_shift.py`                     |
+| §5.3    Analytic Gaussian-bridge validation          | `exp_5_3_gaussian_bridge_validation.py`      |
 | §5.4.1  Penalty parameter sweep                     | `exp_5_4_1_lambda_sweep.py`                  |
 | §5.4.2  Kernel *U*-statistic limit                  | `exp_5_4_2_kernel_limit.py`                  |
+| §5.1.3  Interaction end-to-end test                 | `exp_5_4_3_interaction_end_to_end.py`        |
 | §5.5    Computational scaling                       | `exp_5_5_compute_scaling.py`                 |
-| §5.6    Potential MFG: EV charging fleet            | `exp_5_6_ev_charging.py`                     |
+| §5.6    EV charging experiment                      | `exp_5_6_ev_charging_revised.py`             |
 
 ## Implementation notes
 
@@ -146,6 +160,12 @@ python experiments/exp_5_5_compute_scaling.py
   the longest single run (a few hours).
 * The estimators in `kernel_sot.estimators` are stateless functions; reseed via
   `kernel_sot.utils.set_seed` if you need deterministic outputs.
+* `exp_5_6_ev_charging.py` is retained only to reproduce the original pre-revision
+  EV experiment. The revised manuscript and its reported EV results use
+  `exp_5_6_ev_charging_revised.py`, in which the same applied charging power
+  enters both the SOC dynamics and aggregate demand. This control-dependent
+  experiment is a numerical extension outside the direct scope of the
+  state-law convergence theorem.
 * The kernel-MMD-penalty Schrödinger bridge of Nakano (2024)
   ([JJIAM, to appear](https://arxiv.org/abs/2310.14522))
   is recovered by setting the congestion weight `c = 0` in the algorithm.

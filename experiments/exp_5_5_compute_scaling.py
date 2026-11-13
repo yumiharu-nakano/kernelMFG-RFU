@@ -6,7 +6,8 @@ Reproduces Tables 6 and 7 of the paper:
   for varying batch size N.
 - Stand-alone MMD computation time (forward + backward), in milliseconds.
 
-The kernel U-stat has O(N^2) cost; the RF U-stat has O(NM) cost.
+The kernel U-stat has O(d N^2) cost; the RF U-stat has O(d N M) cost
+(O(N^2) and O(NM), respectively, when d is fixed).
 The crossover where RF becomes faster occurs around N ~ M.
 """
 
@@ -56,28 +57,28 @@ def time_sbp_iter(args, N, method, n_iters=50):
     # Warm-up
     for _ in range(3):
         optimizer.zero_grad()
-        x0 = torch.zeros(2 * N, args.d)
+        x0 = torch.zeros(N, args.d)
         x1, ctrl = sde_integrate_with_cost(drift, x0, t_grid, sigma)
-        y = sample_nu(2 * N)
+        y = sample_nu(N)
         if method == "kernel":
             mmd2 = mmd2_kernel_ustat(x1, y, args.alpha)
         else:
             mmd2 = mmd2_rf_ustat(x1, y, M=args.M, alpha=args.alpha)
-        (ctrl * 1e-3 + mmd2).backward()
+        (ctrl * 2e-3 + mmd2).backward()
         optimizer.step()
 
     # Measure
     t0 = time.time()
     for _ in range(n_iters):
         optimizer.zero_grad()
-        x0 = torch.zeros(2 * N, args.d)
+        x0 = torch.zeros(N, args.d)
         x1, ctrl = sde_integrate_with_cost(drift, x0, t_grid, sigma)
-        y = sample_nu(2 * N)
+        y = sample_nu(N)
         if method == "kernel":
             mmd2 = mmd2_kernel_ustat(x1, y, args.alpha)
         else:
             mmd2 = mmd2_rf_ustat(x1, y, M=args.M, alpha=args.alpha)
-        (ctrl * 1e-3 + mmd2).backward()
+        (ctrl * 2e-3 + mmd2).backward()
         optimizer.step()
     return (time.time() - t0) / n_iters * 1000.0  # ms
 

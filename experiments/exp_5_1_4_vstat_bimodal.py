@@ -33,7 +33,7 @@ from kernel_sot import (
 )
 
 DEFAULT_CFG = {"d": 2, "M": 200, "N": 64, "hidden": (64, 32),
-               "alpha": 1.0, "lam_inv": 1e-2, "epochs": 2000,
+               "alpha": 1.0, "lam_inv": 2e-2, "epochs": 2000,
                "sigma": 0.5, "time_steps": 20, "lr": 1e-3}
 
 

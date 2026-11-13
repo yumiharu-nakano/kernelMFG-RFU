@@ -124,7 +124,7 @@ def parse_args():
     p.add_argument("--time_steps", type=int, default=20)
     p.add_argument("--M", type=int, default=300)
     p.add_argument("--N", type=int, default=128)
-    p.add_argument("--epochs", type=int, default=3000)
+    p.add_argument("--epochs", type=int, default=2000)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--lam", type=float, default=1000.0,
                    help="Terminal MMD penalty weight (lambda).")

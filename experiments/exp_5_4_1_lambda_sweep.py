@@ -33,13 +33,14 @@ def parse_args():
     p.add_argument("--d", type=int, default=10)
     p.add_argument("--alpha", type=float, default=0.1)
     p.add_argument("--M", type=int, default=400)
-    p.add_argument("--N", type=int, default=80)
+    p.add_argument("--N", type=int, default=160,
+                   help="Batch size: paths and target samples drawn per iteration")
     p.add_argument("--sigma", type=float, default=0.5)
     p.add_argument("--epochs", type=int, default=5000)
     p.add_argument("--time_steps", type=int, default=20)
     p.add_argument("--hidden", type=int, nargs="+", default=[128, 64])
     p.add_argument("--lam_invs", type=float, nargs="+",
-                   default=[1e-2, 3e-3, 1e-3, 3e-4, 1e-4])
+                   default=[2e-2, 6e-3, 2e-3, 6e-4, 2e-4])
     p.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     p.add_argument("--output_dir", type=str, default="results")
     return p.parse_args()
@@ -59,9 +60,9 @@ def run_one(args, seed, lam_inv):
     last_ctrl = 0.0
     for ep in range(args.epochs):
         optimizer.zero_grad()
-        x0 = torch.zeros(2 * args.N, args.d)
+        x0 = torch.zeros(args.N, args.d)
         x1, ctrl = sde_integrate_with_cost(drift, x0, t_grid, args.sigma, t_subsample=8)
-        y = sample_nu(2 * args.N)
+        y = sample_nu(args.N)
         mmd2 = mmd2_rf_ustat(x1, y, M=args.M, alpha=args.alpha)
         loss = ctrl * lam_inv + mmd2
         loss.backward()

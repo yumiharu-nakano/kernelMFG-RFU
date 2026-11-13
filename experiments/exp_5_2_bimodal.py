@@ -4,7 +4,7 @@ Section 5.2 -- Schrödinger bridge: bimodal target (d = 2).
 Reproduces Section 5.2 of the paper:
   mu_0 = delta_0,
   mu_1 = (1/2) N((2,2)^T, 0.25 I_2) + (1/2) N((-2,-2)^T, 0.25 I_2),
-  sigma = 0.5, alpha = 1.0, M = 200, N = 64, lambda^{-1} = 0.01, 2000 epochs.
+  sigma = 0.5, alpha = 1.0, M = 200, N = 128, lambda^{-1} = 0.02, 2000 epochs.
 
 Outputs MMD^2 (eval) over multiple seeds and a sample-paths/terminal figure.
 """
@@ -35,8 +35,9 @@ def parse_args():
     p.add_argument("--sigma", type=float, default=0.5)
     p.add_argument("--alpha", type=float, default=1.0)
     p.add_argument("--M", type=int, default=200)
-    p.add_argument("--N", type=int, default=64)
-    p.add_argument("--lam_inv", type=float, default=0.01)
+    p.add_argument("--N", type=int, default=128,
+                   help="Batch size: paths and target samples drawn per iteration")
+    p.add_argument("--lam_inv", type=float, default=0.02)
     p.add_argument("--epochs", type=int, default=2000)
     p.add_argument("--time_steps", type=int, default=20)
     p.add_argument("--hidden", type=int, nargs="+", default=[64, 32])
@@ -60,10 +61,10 @@ def run_one(args, seed: int):
 
     for ep in range(args.epochs):
         optimizer.zero_grad()
-        x0 = torch.zeros(2 * args.N, args.d)
+        x0 = torch.zeros(args.N, args.d)
         x1, ctrl = sde_integrate_with_cost(
             drift, x0, t_grid, args.sigma, t_subsample=8)
-        y = sample_nu(2 * args.N)
+        y = sample_nu(args.N)
         mmd2 = mmd2_rf_ustat(x1, y, M=args.M, alpha=args.alpha)
         loss = ctrl * args.lam_inv + mmd2
         loss.backward()
